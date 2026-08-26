@@ -19,6 +19,57 @@ function pct(sum,count){
   return Math.max(0,Math.min(100,Math.round(((sum+max)/(max*2))*100)))
 }
 
+const INTENT_OPTIONS = [
+  { key: 'very', label: '매우 받고 싶다' },
+  { key: 'interested', label: '관심 있다' },
+  { key: 'unsure', label: '아직 잘 모르겠다' },
+  { key: 'no', label: '필요하지 않다' }
+]
+
+const METHOD_OPTIONS = [
+  { key: 'skin_type', label: '피부타입 기반' },
+  { key: 'current_state', label: '현재 피부상태 기반' },
+  { key: 'routine', label: '아침/저녁 루틴' },
+  { key: 'season', label: '계절/날씨 기반' },
+  { key: 'concern', label: '고민별 집중 추천' },
+  { key: 'subscription', label: '세트/구독 추천' }
+]
+
+function HexRadar({ data }) {
+  const cx = 110, cy = 110, R = 82
+  const angleFor = i => (Math.PI * 2 * i) / data.length - Math.PI / 2
+  const pointFor = (i, r) => {
+    const a = angleFor(i)
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)]
+  }
+  const dataPoints = data.map((d, i) => pointFor(i, R * Math.max(0.06, d.value / 100)))
+  const dataPath = dataPoints.map(p => p.join(',')).join(' ')
+  return (
+    <svg viewBox="0 0 220 220" className="hex-radar" role="img" aria-label="6축 피부 성향 그래프">
+      {[0.25, 0.5, 0.75, 1].map((lv, li) => (
+        <polygon key={li} points={data.map((_, i) => pointFor(i, R * lv).join(',')).join(' ')} className="hex-radar-grid" />
+      ))}
+      {data.map((_, i) => {
+        const [x, y] = pointFor(i, R)
+        return <line key={i} x1={cx} y1={cy} x2={x} y2={y} className="hex-radar-axis" />
+      })}
+      <polygon points={dataPath} className="hex-radar-shape" />
+      {data.map((d, i) => {
+        const [x, y] = pointFor(i, R)
+        return <circle key={d.label} cx={x} cy={y} r="3.5" className="hex-radar-dot" />
+      })}
+      {data.map((d, i) => {
+        const [x, y] = pointFor(i, R + 26)
+        return (
+          <text key={d.label} x={x} y={y} textAnchor="middle" dominantBaseline="middle" className="hex-radar-label">
+            {d.label} {d.value}
+          </text>
+        )
+      })}
+    </svg>
+  )
+}
+
 export default function App(){
   const [screen,setScreen]=useState('landing')
   const [chapterIndex,setChapterIndex]=useState(0)
@@ -29,6 +80,10 @@ export default function App(){
   const [contactValue,setContactValue]=useState('')
   const [consent,setConsent]=useState(false)
   const [leadStatus,setLeadStatus]=useState('')
+  const [recommendIntent,setRecommendIntent]=useState('')
+  const [recommendMethods,setRecommendMethods]=useState([])
+
+  const toggleMethod=(key)=>setRecommendMethods(v=>v.includes(key)?v.filter(x=>x!==key):[...v,key])
 
   const chapter=chapters[chapterIndex]
   const chapterQs=questions.filter(q=>q.chapter===chapter.id)
@@ -109,6 +164,8 @@ export default function App(){
         aging_score: analysis.p.WT,
         congestion_score: analysis.p.CB,
         heat_score: analysis.p.HQ,
+        recommend_intent: recommendIntent || null,
+        recommend_methods: recommendMethods,
         source: 'beta-web'
       })
       setLeadStatus(res.mode === 'supabase'
@@ -165,6 +222,8 @@ export default function App(){
         <h1 className="type">{analysis.type16}</h1>
         <h3>나만의 피부 성향 프로필</h3>
 
+        <HexRadar data={vals.map(([label,value])=>({label,value}))} />
+
         <div className="polygon-grid">
           {vals.map(([l,v,c])=><div className="result-poly" key={l} style={{'--pc':c}}>
             <strong>{v}</strong><span>{l}</span>
@@ -185,6 +244,32 @@ export default function App(){
           <b>향 민감 반응이 보여요</b>
           <p>향이 강한 제품이나 향료·에센셜오일이 포함된 제품은 제품 선택 시 우선 확인하는 것이 좋아요.</p>
         </div>}
+
+        <div className="recommend-card">
+          <div className="lead-kicker">맞춤 추천 의향</div>
+          <h3>추후 내 피부에 맞는 제품 추천을 받고 싶나요?</h3>
+          <div className="intent-options">
+            {INTENT_OPTIONS.map(o=>
+              <button
+                key={o.key}
+                className={`intent-btn ${recommendIntent===o.key?'selected':''}`}
+                onClick={()=>setRecommendIntent(o.key)}
+              >{o.label}</button>
+            )}
+          </div>
+          {recommendIntent && recommendIntent!=='no' && <>
+            <p className="recommend-sub">원하는 추천 방식을 골라주세요 (복수 선택 가능)</p>
+            <div className="method-options">
+              {METHOD_OPTIONS.map(o=>
+                <button
+                  key={o.key}
+                  className={`method-chip ${recommendMethods.includes(o.key)?'selected':''}`}
+                  onClick={()=>toggleMethod(o.key)}
+                >{o.label}</button>
+              )}
+            </div>
+          </>}
+        </div>
 
         <div className="lead-card">
           <div className="lead-kicker">SOULLY 64 사전 등록</div>

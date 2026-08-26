@@ -13,8 +13,14 @@ create table if not exists public.skin_test_leads (
   aging_score integer,
   congestion_score integer,
   heat_score integer,
+  recommend_intent text check (recommend_intent in ('very', 'interested', 'unsure', 'no')),
+  recommend_methods text[],
   source text default 'beta-web'
 );
+
+-- v3.3: adds recommend_intent / recommend_methods to a table created before this change
+alter table public.skin_test_leads add column if not exists recommend_intent text;
+alter table public.skin_test_leads add column if not exists recommend_methods text[];
 
 alter table public.skin_test_leads enable row level security;
 
