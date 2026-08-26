@@ -174,6 +174,8 @@ export default function App(){
         heat_score: analysis.p.HQ,
         recommend_intent: recommendIntent || null,
         recommend_methods: recommendMethods,
+        answers,
+        skin_version: 'v3.3',
         source: 'beta-web'
       })
       setLeadStatus(res.mode === 'supabase'

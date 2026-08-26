@@ -15,12 +15,22 @@ create table if not exists public.skin_test_leads (
   heat_score integer,
   recommend_intent text check (recommend_intent in ('very', 'interested', 'unsure', 'no')),
   recommend_methods text[],
+  answers jsonb,
+  skin_version text default 'v3.3',
   source text default 'beta-web'
 );
 
 -- v3.3: adds recommend_intent / recommend_methods to a table created before this change
 alter table public.skin_test_leads add column if not exists recommend_intent text;
 alter table public.skin_test_leads add column if not exists recommend_methods text[];
+
+-- v3.4: raw survey answers + a version tag, so future scoring changes can be
+-- told apart from older diagnoses when this table is later reviewed/queried.
+-- No user/auth table exists yet, so this stays append-only and unlinked to
+-- an identity — see the auth/DB review notes for the follow-up needed to
+-- turn this into per-user diagnosis history.
+alter table public.skin_test_leads add column if not exists answers jsonb;
+alter table public.skin_test_leads add column if not exists skin_version text default 'v3.3';
 
 alter table public.skin_test_leads enable row level security;
 
