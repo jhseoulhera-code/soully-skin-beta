@@ -132,9 +132,11 @@ export default function App(){
 
   const chapter=activeChapters[chapterIndex]
   const chapterQs=chapter ? activeQuestions.filter(q=>q.chapter===chapter.id) : []
-  const batches=chunk(chapterQs,2)
+  // One question per screen: every diagnosis question here is single-choice,
+  // so picking an answer auto-advances (see `choose` below) instead of
+  // waiting for a manual "다음" click.
+  const batches=chunk(chapterQs,1)
   const currentBatch=batches[batchIndex] || []
-  const batchDone=currentBatch.every(q=>answers[q.text]!==undefined)
 
   const answeredCount = Object.keys(answers).length
   const totalQuestions = activeQuestions.length
@@ -169,7 +171,23 @@ export default function App(){
     return {p,type16,type64,primaryType,weather,tags}
   },[answers,activeQuestions])
 
-  const choose=(q,i)=>setAnswers(v=>({...v,[q.text]:i}))
+  // Holds the pending "advance to next question" timer. Re-selecting an
+  // answer (or picking a different one) before it fires cancels and
+  // reschedules it, so a fast double-tap on an answer — or changing one's
+  // mind within the delay window — can never fire two advances for one
+  // question; only the last selection before the delay elapses counts.
+  const advanceTimerRef=useRef(null)
+
+  const choose=(q,i)=>{
+    setAnswers(v=>({...v,[q.text]:i}))
+    if(advanceTimerRef.current) clearTimeout(advanceTimerRef.current)
+    // Long enough to see the answer highlight before the screen changes,
+    // short enough not to feel like a delay.
+    advanceTimerRef.current=setTimeout(()=>{
+      advanceTimerRef.current=null
+      nextBatch()
+    },200)
+  }
 
   const nextBatch=()=>{
     if(batchIndex < batches.length-1){
@@ -187,12 +205,16 @@ export default function App(){
   }
 
   const prev=()=>{
+    // A manual "이전" click always wins over a still-pending auto-advance —
+    // otherwise the stale timer could fire moments later and shove the user
+    // forward again right after they navigated back.
+    if(advanceTimerRef.current){clearTimeout(advanceTimerRef.current);advanceTimerRef.current=null}
     if(showInsight){setShowInsight(false); return}
     if(batchIndex>0){setBatchIndex(i=>i-1); return}
     if(chapterIndex>0){
       const pi=chapterIndex-1
       const prevQs=activeQuestions.filter(q=>q.chapter===activeChapters[pi].id)
-      setChapterIndex(pi); setBatchIndex(Math.max(0,chunk(prevQs,2).length-1))
+      setChapterIndex(pi); setBatchIndex(Math.max(0,chunk(prevQs,1).length-1))
     }
   }
 
@@ -465,8 +487,7 @@ export default function App(){
       </div>
 
       <footer className="nav">
-        <button className="back" onClick={prev} disabled={chapterIndex===0&&batchIndex===0}>← 이전</button>
-        <button className="next themed-btn" disabled={!batchDone} onClick={nextBatch}>{batchIndex===batches.length-1?'챕터 마치기':'다음 →'}</button>
+        <button className="back back-solo" onClick={prev} disabled={chapterIndex===0&&batchIndex===0}>← 이전</button>
       </footer>
     </section>
   </main>
