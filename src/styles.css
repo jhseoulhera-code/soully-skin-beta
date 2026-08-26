@@ -200,3 +200,7 @@
   background:#7359d0;color:#fff;border-color:#7359d0;
   box-shadow:0 6px 14px rgba(115,89,208,.22)
 }
+
+.cta:disabled{opacity:.55;cursor:not-allowed}
+.unlock-teaser p{margin-bottom:14px}
+.detail64-card p{margin-bottom:2px}

@@ -41,13 +41,13 @@ to anon
 with check (consent = true);
 
 
--- v3.5: skin_diagnoses stores EVERY completed diagnosis, not only the
--- people who leave contact info in skin_test_leads. The two tables keep
--- their separate roles:
---   skin_diagnoses  = every completed diagnosis (anonymous by default)
---   skin_test_leads = only the people who chose to leave a contact
--- skin_test_leads.diagnosis_id links a lead back to the diagnosis that
--- was on screen when they registered, when that save succeeded.
+-- v3.5 (superseded by v3.6 below): skin_diagnoses was originally meant to
+-- store EVERY completed diagnosis, contact info or not. That policy was
+-- reversed in v3.6 — the app no longer writes to this table at all, so it
+-- stays here unused/reserved rather than being dropped. skin_test_leads is
+-- now the only write path, and its diagnosis_id column (added below) is
+-- likewise not populated anymore since no skin_diagnoses row is created
+-- per registration.
 --
 -- Score columns are named to match this app's actual 6 axes (see
 -- src/App.jsx's AXIS map / analysis.p: OD/SR/PN/WT/CB/HQ) and reuse the
@@ -103,3 +103,8 @@ with check (true);
 
 alter table public.skin_test_leads
   add column if not exists diagnosis_id uuid references public.skin_diagnoses(id);
+
+-- v3.6: registration policy change — skin_test_leads now stores the FULL
+-- diagnosis for the sole write path (register contact + consent to unlock
+-- the Skin 64 detail). skin_diagnoses above is no longer written to by the
+-- app; nothing is saved anywhere for a visitor who never registers.

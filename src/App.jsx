@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { chapters, questions } from './questions'
-import { saveLead, saveDiagnosis, getOrCreateAnonymousId } from './supabase'
+import { saveLead } from './supabase'
 
 const AXIS = {
   OD:['유분','건조'],
@@ -83,15 +83,13 @@ export default function App(){
   const [leadStatus,setLeadStatus]=useState('')
   const [recommendIntent,setRecommendIntent]=useState('')
   const [recommendMethods,setRecommendMethods]=useState([])
-
-  // Guards the auto-save-on-result effect below: true once this run's
-  // diagnosis row has been (or is being) written, so a StrictMode double
-  // effect-fire or an unrelated re-render on the result screen can never
-  // insert a second row for the same completed diagnosis. Cleared only
-  // when a fresh run starts (entering the journey screen), so doing the
-  // test again from scratch still creates a new row.
-  const diagnosisSavedRef=useRef(false)
-  const diagnosisIdRef=useRef(null)
+  const [show64Gate,setShow64Gate]=useState(false)
+  const [showDetailed64Type,setShowDetailed64Type]=useState(false)
+  const [submitting,setSubmitting]=useState(false)
+  // A ref (not the `submitting` state) is the actual double-submit guard:
+  // it's mutated synchronously, so two clicks fired in the same tick — before
+  // React has re-rendered the disabled button — still can't both pass it.
+  const submittingRef=useRef(false)
 
   const toggleMethod=(key)=>setRecommendMethods(v=>v.includes(key)?v.filter(x=>x!==key):[...v,key])
 
@@ -102,13 +100,6 @@ export default function App(){
   useEffect(()=>{
     window.scrollTo(0,0)
   },[screen,chapterIndex,batchIndex,showInsight])
-
-  useEffect(()=>{
-    if(screen==='journey'){
-      diagnosisSavedRef.current=false
-      diagnosisIdRef.current=null
-    }
-  },[screen])
 
   const chapter=chapters[chapterIndex]
   const chapterQs=questions.filter(q=>q.chapter===chapter.id)
@@ -142,34 +133,6 @@ export default function App(){
     return {p,type16,type64,weather,tags}
   },[answers])
 
-  // Every completed diagnosis is saved as soon as the result screen is
-  // reached — with or without the visitor ever registering a contact —
-  // so this data accumulates for every anonymous visitor, not only the
-  // ones who fill in the lead form further down this screen. A failed
-  // save is only logged: it must never block or blank out the result UI.
-  useEffect(()=>{
-    if(screen!=='result') return
-    if(diagnosisSavedRef.current) return
-    diagnosisSavedRef.current=true
-    saveDiagnosis({
-      anonymous_id: getOrCreateAnonymousId(),
-      skin_type: analysis.type16,
-      skin64_candidate: analysis.type64,
-      oil_score: analysis.p.OD,
-      sensitivity_score: analysis.p.SR,
-      pigmentation_score: analysis.p.PN,
-      aging_score: analysis.p.WT,
-      congestion_score: analysis.p.CB,
-      heat_score: analysis.p.HQ,
-      answers,
-      skin_version: 'v3.3'
-    }).then(res=>{
-      if(res?.ok) diagnosisIdRef.current=res.id
-    }).catch(e=>{
-      console.error('진단 자동 저장 실패 (결과 화면에는 영향 없음):', e)
-    })
-  },[screen])
-
   const choose=(q,i)=>setAnswers(v=>({...v,[q.text]:i}))
 
   const nextBatch=()=>{
@@ -198,11 +161,18 @@ export default function App(){
   }
 
   const submitLead = async () => {
+    // Guards against a double click (or any duplicate call in the same
+    // click event) inserting the same registration twice — once a save is
+    // in flight, or has already succeeded, this is a no-op.
+    if(submittingRef.current || showDetailed64Type) return
     const value = contactValue.trim()
     if(!value || !consent){
       setLeadStatus('연락처와 동의 항목을 확인해주세요.')
       return
     }
+    submittingRef.current=true
+    setSubmitting(true)
+    setLeadStatus('')
     try{
       const res = await saveLead({
         contact_method: contactMethod,
@@ -220,15 +190,20 @@ export default function App(){
         recommend_methods: recommendMethods,
         answers,
         skin_version: 'v3.3',
-        diagnosis_id: diagnosisIdRef.current,
         source: 'beta-web'
       })
-      setLeadStatus(res.mode === 'supabase'
-        ? '등록됐어요. 정식 버전 소식을 보내드릴게요.'
-        : '이 PC에 임시 저장됐어요. Supabase를 연결하면 회사 전체 응답을 한곳에 모을 수 있어요.')
+      if(res?.success){
+        // Only a confirmed save unlocks the detailed 64-type reveal.
+        setShowDetailed64Type(true)
+      }else{
+        setLeadStatus('정보 저장 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.')
+      }
     }catch(e){
       console.error(e)
-      setLeadStatus('저장 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.')
+      setLeadStatus('정보 저장 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.')
+    }finally{
+      submittingRef.current=false
+      setSubmitting(false)
     }
   }
 
@@ -326,10 +301,17 @@ export default function App(){
           </>}
         </div>
 
-        <div className="lead-card">
-          <div className="lead-kicker">SOULLY 64 사전 등록</div>
-          <h3>내 결과를 다시 받아보고 싶나요?</h3>
-          <p>정식 Skin 64 오픈 소식과 내 피부 결과 업데이트를 받아볼 연락처를 남겨주세요.</p>
+        {!showDetailed64Type && !show64Gate && <div className="lead-card unlock-teaser">
+          <div className="lead-kicker">SOULLY SKIN 64</div>
+          <h3>내 피부 MBTI를 더 자세히 알고 싶나요?</h3>
+          <p>카카오톡 또는 이메일을 남기면 64가지 세부 피부 MBTI 결과를 확인할 수 있어요.</p>
+          <button className="cta purple" onClick={()=>setShow64Gate(true)}>64타입 상세 결과 보기</button>
+        </div>}
+
+        {!showDetailed64Type && show64Gate && <div className="lead-card">
+          <div className="lead-kicker">SOULLY SKIN 64</div>
+          <h3>64타입 피부 MBTI 결과를 받아보세요</h3>
+          <p>카카오톡 또는 이메일을 남기고 개인정보 수집에 동의하면 상세 결과를 바로 확인할 수 있어요.</p>
 
           <div className="method-tabs">
             <button
@@ -352,15 +334,27 @@ export default function App(){
 
           <label className="consent-row">
             <input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)} />
-            <span>SOULLY Skin 64 오픈 및 피부 결과 안내를 위한 연락처 저장에 동의합니다.</span>
+            <span>개인정보 수집 및 이용에 동의합니다. (연락처, 피부진단 결과 — 64타입 결과 제공 및 안내 목적)</span>
           </label>
 
-          <button className="cta lead-submit" onClick={submitLead}>등록하기</button>
+          <button className="cta lead-submit" onClick={submitLead} disabled={submitting}>
+            {submitting?'등록 중...':'내 64타입 결과 확인하기'}
+          </button>
           {leadStatus && <div className="lead-status">{leadStatus}</div>}
-        </div>
+        </div>}
 
-        <div className="coming"><span>COMING SOON</span><b>Skin 64 · {analysis.type64}</b></div>
-        <button className="cta purple" onClick={()=>{setAnswers({});setChapterIndex(0);setBatchIndex(0);setScreen('landing');setContactValue('');setConsent(false);setLeadStatus('')}}>처음부터 다시 하기</button>
+        {showDetailed64Type && <div className="lead-card detail64-card">
+          <div className="lead-kicker">SOULLY SKIN 64</div>
+          <h3>64타입 피부 MBTI 상세 결과</h3>
+          <p>등록이 완료됐어요! 64타입 세부 분석 알고리즘과 콘텐츠는 곧 이 화면에 채워질 예정이에요.</p>
+          <div className="coming"><span>PREPARING</span><b>Skin 64 · {analysis.type64}</b></div>
+        </div>}
+
+        <button className="cta purple" onClick={()=>{
+          setAnswers({});setChapterIndex(0);setBatchIndex(0);setScreen('landing')
+          setContactValue('');setConsent(false);setLeadStatus('')
+          setShow64Gate(false);setShowDetailed64Type(false);setSubmitting(false);submittingRef.current=false
+        }}>처음부터 다시 하기</button>
       </section>
     </main>
   }

@@ -19,23 +19,28 @@ export function getOrCreateAnonymousId() {
   return id
 }
 
+// Only called when a visitor registers a contact + consent on the result
+// screen — this is the single write path for diagnosis data under the
+// "register to unlock Skin 64" policy. `success` is the caller's signal to
+// unlock the detailed 64-type reveal; a thrown/caught error (or a falsy
+// `success`) must keep that reveal locked.
 export async function saveLead(payload) {
   if (supabase) {
     const { error } = await supabase.from('skin_test_leads').insert(payload)
     if (error) throw error
-    return { mode: 'supabase' }
+    return { mode: 'supabase', success: true }
   }
 
   const current = JSON.parse(localStorage.getItem('soully_skin_leads') || '[]')
   current.push({ ...payload, saved_at: new Date().toISOString() })
   localStorage.setItem('soully_skin_leads', JSON.stringify(current))
-  return { mode: 'local' }
+  return { mode: 'local', success: true }
 }
 
-// Fired automatically once a diagnosis finishes (contact info or not).
-// Never throws to the caller with a UX-breaking effect: any Supabase error
-// is surfaced on the returned object instead, since a failed save here must
-// never block or blank out the result screen.
+// Not called anywhere right now. Registering (saveLead above) is the only
+// way diagnosis data reaches the database under the current policy — this
+// stays here unused/reserved rather than deleted, in case a later, clearly
+// opt-in use for skin_diagnoses comes back.
 export async function saveDiagnosis(payload) {
   if (supabase) {
     const { data, error } = await supabase
