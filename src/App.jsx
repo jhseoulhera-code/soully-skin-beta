@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { chapters, questions } from './questions'
 import { saveLead } from './supabase'
 
@@ -36,7 +36,8 @@ const METHOD_OPTIONS = [
 ]
 
 function HexRadar({ data }) {
-  const cx = 110, cy = 110, R = 82
+  const cx = 110, cy = 140, R = 82
+  const LABEL_R = R + 26
   const angleFor = i => (Math.PI * 2 * i) / data.length - Math.PI / 2
   const pointFor = (i, r) => {
     const a = angleFor(i)
@@ -45,7 +46,7 @@ function HexRadar({ data }) {
   const dataPoints = data.map((d, i) => pointFor(i, R * Math.max(0.06, d.value / 100)))
   const dataPath = dataPoints.map(p => p.join(',')).join(' ')
   return (
-    <svg viewBox="0 0 220 220" className="hex-radar" role="img" aria-label="6축 피부 성향 그래프">
+    <svg viewBox={`0 0 220 ${cy + LABEL_R + 24}`} className="hex-radar" style={{ overflow: 'visible' }} role="img" aria-label="6축 피부 성향 그래프">
       {[0.25, 0.5, 0.75, 1].map((lv, li) => (
         <polygon key={li} points={data.map((_, i) => pointFor(i, R * lv).join(',')).join(' ')} className="hex-radar-grid" />
       ))}
@@ -85,6 +86,14 @@ export default function App(){
 
   const toggleMethod=(key)=>setRecommendMethods(v=>v.includes(key)?v.filter(x=>x!==key):[...v,key])
 
+  // Answers/progress state is untouched here — only the scroll position resets
+  // whenever the visible "page" (screen/chapter/batch/insight) changes, so a
+  // new question always opens at the top instead of wherever the last page
+  // happened to be scrolled to.
+  useEffect(()=>{
+    window.scrollTo(0,0)
+  },[screen,chapterIndex,batchIndex,showInsight])
+
   const chapter=chapters[chapterIndex]
   const chapterQs=questions.filter(q=>q.chapter===chapter.id)
   const batches=chunk(chapterQs,2)
@@ -121,9 +130,9 @@ export default function App(){
 
   const nextBatch=()=>{
     if(batchIndex < batches.length-1){
-      setBatchIndex(i=>i+1); window.scrollTo({top:0,behavior:'smooth'})
+      setBatchIndex(i=>i+1)
     }else{
-      setShowInsight(true); window.scrollTo({top:0,behavior:'smooth'})
+      setShowInsight(true)
     }
   }
 
@@ -132,7 +141,6 @@ export default function App(){
     if(chapterIndex < chapters.length-1){
       setChapterIndex(i=>i+1); setBatchIndex(0)
     }else setScreen('result')
-    window.scrollTo({top:0,behavior:'smooth'})
   }
 
   const prev=()=>{

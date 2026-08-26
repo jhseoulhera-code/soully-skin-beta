@@ -164,7 +164,7 @@
 
 
 /* v3.3 hexagon radar + recommendation intent survey */
-.hex-radar{width:100%;max-width:280px;margin:6px auto 4px;display:block}
+.hex-radar{width:100%;max-width:280px;margin:20px auto 4px;display:block;overflow:visible}
 .hex-radar-grid{fill:none;stroke:#e7e1f5;stroke-width:1}
 .hex-radar-axis{stroke:#e7e1f5;stroke-width:1}
 .hex-radar-shape{fill:rgba(139,115,225,.32);stroke:#7359d0;stroke-width:2;stroke-linejoin:round}
