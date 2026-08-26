@@ -13,10 +13,22 @@ const AXIS = {
 
 const chunk = (arr, size=2) => arr.reduce((acc,_,i)=>(i%size?acc: [...acc, arr.slice(i,i+size)]),[])
 
-function pct(sum,count){
-  if(!count) return 50
-  const max=count*3
-  return Math.max(0,Math.min(100,Math.round(((sum+max)/(max*2))*100)))
+// weightTotal is the sum of each answered question's weight (default 1), not
+// a plain count — a weight-1.5 "anchor" question counts for 1.5x as much of
+// the axis's -3..+3 range on both sides of the average.
+function pct(weightedSum,weightTotal){
+  if(!weightTotal) return 50
+  const max=weightTotal*3
+  return Math.max(0,Math.min(100,Math.round(((weightedSum+max)/(max*2))*100)))
+}
+
+const AXIS_META = {
+  OD: ['유분', '#B9A7F3'],
+  SR: ['민감', '#F1DFA7'],
+  PN: ['색소', '#E8C1D1'],
+  WT: ['노화', '#C4D3EA'],
+  CB: ['모공', '#F2C1B5'],
+  HQ: ['열반응', '#F2CE9E']
 }
 
 const INTENT_OPTIONS = [
@@ -73,6 +85,7 @@ function HexRadar({ data }) {
 
 export default function App(){
   const [screen,setScreen]=useState('landing')
+  const [mode,setMode]=useState(null) // 'quick' (16, 4-axis) | 'deep' (64, 6-axis)
   const [chapterIndex,setChapterIndex]=useState(0)
   const [batchIndex,setBatchIndex]=useState(0)
   const [answers,setAnswers]=useState({})
@@ -101,37 +114,60 @@ export default function App(){
     window.scrollTo(0,0)
   },[screen,chapterIndex,batchIndex,showInsight])
 
-  const chapter=chapters[chapterIndex]
-  const chapterQs=questions.filter(q=>q.chapter===chapter.id)
+  // The question bank is filtered once per mode: QUICK 16 only ever sees its
+  // 18 four-axis questions; DEEP 64 sees the same 18 plus the 20 more
+  // (including all of CB/HQ, which QUICK never asks) that make up its 38
+  // type questions, plus the 6-question "최근의 내 피부" state chapter.
+  // Chapters with no question in the active mode (e.g. 모공/열반응/최근의
+  // 내 피부 chapters under QUICK) simply don't appear — nothing else needs
+  // to special-case chapter visibility.
+  const activeQuestions = useMemo(
+    () => mode ? questions.filter(q=>q.modes.includes(mode)) : [],
+    [mode]
+  )
+  const activeChapters = useMemo(
+    () => chapters.filter(c=>activeQuestions.some(q=>q.chapter===c.id)),
+    [activeQuestions]
+  )
+
+  const chapter=activeChapters[chapterIndex]
+  const chapterQs=chapter ? activeQuestions.filter(q=>q.chapter===chapter.id) : []
   const batches=chunk(chapterQs,2)
   const currentBatch=batches[batchIndex] || []
   const batchDone=currentBatch.every(q=>answers[q.text]!==undefined)
 
   const answeredCount = Object.keys(answers).length
-  const totalQuestions = questions.length
-  const overallPercent = Math.min(100, Math.round((answeredCount / totalQuestions) * 100))
+  const totalQuestions = activeQuestions.length
+  const overallPercent = totalQuestions ? Math.min(100, Math.round((answeredCount / totalQuestions) * 100)) : 0
 
   const analysis=useMemo(()=>{
     const sums={OD:0,SR:0,PN:0,WT:0,CB:0,HQ:0}
-    const counts={OD:0,SR:0,PN:0,WT:0,CB:0,HQ:0}
+    const weights={OD:0,SR:0,PN:0,WT:0,CB:0,HQ:0}
     const weather={}
     const tags={}
-    questions.forEach(q=>{
+    activeQuestions.forEach(q=>{
       const picked=answers[q.text]
       if(picked===undefined) return
       const opt=q.options[picked]
       if(q.state) weather[q.axis]=opt.score
       else if(sums[q.axis]!==undefined){
-        sums[q.axis]+=opt.score; counts[q.axis]++
+        const w=q.weight||1
+        sums[q.axis]+=opt.score*w; weights[q.axis]+=w
         if(q.tag) tags[q.tag]=opt.score
       }
     })
     const p={}
-    Object.keys(sums).forEach(k=>p[k]=pct(sums[k],counts[k]))
+    Object.keys(sums).forEach(k=>p[k]=pct(sums[k],weights[k]))
     const type16=(p.OD>=50?'O':'D')+(p.SR>=50?'S':'R')+(p.PN>=50?'P':'N')+(p.WT>=50?'W':'T')
-    const type64=type16+(p.CB>=50?'C':'B')+(p.HQ>=50?'H':'Q')
-    return {p,type16,type64,weather,tags}
-  },[answers])
+    // type64 only exists once CB/HQ were actually asked (DEEP mode) — QUICK
+    // never measures those two axes, so it never gets a real 64-code.
+    const hasDeepAxes = weights.CB>0 && weights.HQ>0
+    const type64 = hasDeepAxes ? type16+(p.CB>=50?'C':'B')+(p.HQ>=50?'H':'Q') : null
+    // Per policy: a user who has both a 16 and a 64 result uses the 64
+    // result as their representative code.
+    const primaryType = type64 || type16
+    return {p,type16,type64,primaryType,weather,tags}
+  },[answers,activeQuestions])
 
   const choose=(q,i)=>setAnswers(v=>({...v,[q.text]:i}))
 
@@ -145,7 +181,7 @@ export default function App(){
 
   const nextChapter=()=>{
     setShowInsight(false)
-    if(chapterIndex < chapters.length-1){
+    if(chapterIndex < activeChapters.length-1){
       setChapterIndex(i=>i+1); setBatchIndex(0)
     }else setScreen('result')
   }
@@ -155,7 +191,7 @@ export default function App(){
     if(batchIndex>0){setBatchIndex(i=>i-1); return}
     if(chapterIndex>0){
       const pi=chapterIndex-1
-      const prevQs=questions.filter(q=>q.chapter===chapters[pi].id)
+      const prevQs=activeQuestions.filter(q=>q.chapter===activeChapters[pi].id)
       setChapterIndex(pi); setBatchIndex(Math.max(0,chunk(prevQs,2).length-1))
     }
   }
@@ -217,8 +253,18 @@ export default function App(){
       <h1>나를 가장 잘 아는<br/>피부 탐색</h1>
       <div className="kicker">SKIN TYPE BETA</div>
       <p>피부의 일상 반응을 따라가며<br/>나만의 피부 성향을 섬세하게 분석해요.</p>
-      <div className="meta"><span>약 5–7분</span><span>8개 챕터</span><span>무료</span></div>
-      <button className="cta purple" onClick={()=>setScreen('journey')}>테스트 시작하기</button>
+      <div className="meta"><span>회원가입 없음</span><span>무료</span></div>
+
+      <div className="mode-picker">
+        <button className="mode-card mode-card--quick" onClick={()=>{setMode('quick');setScreen('journey')}}>
+          <span className="mode-card-title">QUICK 16</span>
+          <span className="mode-card-desc">18문항 · 1~2분 · 4축 기본 진단</span>
+        </button>
+        <button className="mode-card mode-card--deep" onClick={()=>{setMode('deep');setScreen('journey')}}>
+          <span className="mode-card-title">DEEP 64</span>
+          <span className="mode-card-desc">38문항 내외 · 4~5분 · 6축 정밀 진단</span>
+        </button>
+      </div>
       <small>회원가입 없이 바로 시작할 수 있어요.</small>
     </section>
   </main>
@@ -226,10 +272,14 @@ export default function App(){
   if(screen==='journey') return <main className="screen">
     <section className="phone-card journey-card">
       <div className="journey-head">
-        <div><div className="brand">SOULLY</div><h2>피부 탐색 여정</h2><p>8개의 장면을 따라가며 피부를 살펴봐요.</p></div>
+        <div>
+          <div className="brand">SOULLY</div>
+          <h2>{mode==='deep'?'피부 정밀 탐색 여정':'피부 빠른 탐색 여정'}</h2>
+          <p>{activeChapters.length}개의 장면을 따라가며 피부를 살펴봐요 · 약 {mode==='deep'?'4~5':'1~2'}분</p>
+        </div>
       </div>
       <div className="journey-list">
-        {chapters.map((c,i)=><div key={c.id} className="journey-row static">
+        {activeChapters.map((c,i)=><div key={c.id} className="journey-row static">
           <div className="hexnum" style={{background:c.soft,color:c.deep,borderColor:c.accent}}>{i+1}</div>
           <div><strong>{c.title}</strong><span>{c.label}</span></div>
           <i>{i===0?'START':'•'}</i>
@@ -240,16 +290,15 @@ export default function App(){
   </main>
 
   if(screen==='result'){
-    const vals=[
-      ['유분',analysis.p.OD,'#B9A7F3'],['민감',analysis.p.SR,'#F1DFA7'],
-      ['색소',analysis.p.PN,'#E8C1D1'],['노화',analysis.p.WT,'#C4D3EA'],
-      ['모공',analysis.p.CB,'#F2C1B5'],['열반응',analysis.p.HQ,'#F2CE9E']
-    ]
+    const activeAxisKeys = mode==='deep' ? ['OD','SR','PN','WT','CB','HQ'] : ['OD','SR','PN','WT']
+    const vals = activeAxisKeys.map(k=>[AXIS_META[k][0], analysis.p[k], AXIS_META[k][1]])
     return <main className="screen result-screen">
       <section className="phone-card result-card">
         <div className="brand">SOULLY SKIN TYPE</div>
+        <div className="mode-badge">{mode==='deep'?'DEEP 64':'QUICK 16'}</div>
         <p className="muted">당신의 Skin Type</p>
-        <h1 className="type">{analysis.type16}</h1>
+        <h1 className="type">{analysis.primaryType}</h1>
+        {analysis.type64 && <p className="type-sub">Skin16 기준 · {analysis.type16}</p>}
         <h3>나만의 피부 성향 프로필</h3>
 
         <HexRadar data={vals.map(([label,value])=>({label,value}))} />
@@ -261,12 +310,9 @@ export default function App(){
         </div>
 
         <div className="score-box">
-          {[
-            ['OD',analysis.p.OD],['SR',analysis.p.SR],['PN',analysis.p.PN],
-            ['WT',analysis.p.WT],['CB',analysis.p.CB],['HQ',analysis.p.HQ]
-          ].map(([k,v])=><div className="score-line" key={k}>
-            <div><b>{AXIS[k][0]} {v}</b><span>{AXIS[k][1]} {100-v}</span></div>
-            <div className="track"><i style={{width:`${v}%`}}/></div>
+          {activeAxisKeys.map(k=><div className="score-line" key={k}>
+            <div><b>{AXIS[k][0]} {analysis.p[k]}</b><span>{AXIS[k][1]} {100-analysis.p[k]}</span></div>
+            <div className="track"><i style={{width:`${analysis.p[k]}%`}}/></div>
           </div>)}
         </div>
 
@@ -301,14 +347,23 @@ export default function App(){
           </>}
         </div>
 
-        {!showDetailed64Type && !show64Gate && <div className="lead-card unlock-teaser">
+        {mode==='quick' && <div className="lead-card unlock-teaser">
+          <div className="lead-kicker">SOULLY SKIN 64</div>
+          <h3>64가지 세부 피부 MBTI가 궁금하다면?</h3>
+          <p>지금 결과는 4축 기반 QUICK 16이에요. 모공(CB)·열반응(HQ)까지 더한 DEEP 64 정밀진단을 받아보면 64타입 세부 결과를 확인할 수 있어요.</p>
+          <button className="cta purple" onClick={()=>{
+            setAnswers({});setChapterIndex(0);setBatchIndex(0);setMode('deep');setScreen('journey')
+          }}>DEEP 64 정밀진단 받아보기</button>
+        </div>}
+
+        {mode==='deep' && !showDetailed64Type && !show64Gate && <div className="lead-card unlock-teaser">
           <div className="lead-kicker">SOULLY SKIN 64</div>
           <h3>내 피부 MBTI를 더 자세히 알고 싶나요?</h3>
           <p>카카오톡 또는 이메일을 남기면 64가지 세부 피부 MBTI 결과를 확인할 수 있어요.</p>
           <button className="cta purple" onClick={()=>setShow64Gate(true)}>64타입 상세 결과 보기</button>
         </div>}
 
-        {!showDetailed64Type && show64Gate && <div className="lead-card">
+        {mode==='deep' && !showDetailed64Type && show64Gate && <div className="lead-card">
           <div className="lead-kicker">SOULLY SKIN 64</div>
           <h3>64타입 피부 MBTI 결과를 받아보세요</h3>
           <p>카카오톡 또는 이메일을 남기고 개인정보 수집에 동의하면 상세 결과를 바로 확인할 수 있어요.</p>
@@ -343,7 +398,7 @@ export default function App(){
           {leadStatus && <div className="lead-status">{leadStatus}</div>}
         </div>}
 
-        {showDetailed64Type && <div className="lead-card detail64-card">
+        {mode==='deep' && showDetailed64Type && <div className="lead-card detail64-card">
           <div className="lead-kicker">SOULLY SKIN 64</div>
           <h3>64타입 피부 MBTI 상세 결과</h3>
           <p>등록이 완료됐어요! 64타입 세부 분석 알고리즘과 콘텐츠는 곧 이 화면에 채워질 예정이에요.</p>
@@ -351,7 +406,7 @@ export default function App(){
         </div>}
 
         <button className="cta purple" onClick={()=>{
-          setAnswers({});setChapterIndex(0);setBatchIndex(0);setScreen('landing')
+          setAnswers({});setChapterIndex(0);setBatchIndex(0);setScreen('landing');setMode(null)
           setContactValue('');setConsent(false);setLeadStatus('')
           setShow64Gate(false);setShowDetailed64Type(false);setSubmitting(false);submittingRef.current=false
         }}>처음부터 다시 하기</button>
@@ -369,7 +424,7 @@ export default function App(){
       <h2>{chapter.title}</h2>
       <p>{chapter.intro}</p>
       <div className="mini-note">이 챕터의 피부 신호를 확인했어요.</div>
-      <button className="cta themed-btn" onClick={nextChapter}>{chapterIndex===chapters.length-1?'결과 보기':'다음 챕터'}</button>
+      <button className="cta themed-btn" onClick={nextChapter}>{chapterIndex===activeChapters.length-1?'결과 보기':'다음 챕터'}</button>
       <button className="text-btn" onClick={prev}>이전으로</button>
     </section>
   </main>
@@ -390,7 +445,7 @@ export default function App(){
       </div>
 
       <div className="hex-progress">
-        {chapters.map((c,i)=><div className="hex-step" key={c.id}>
+        {activeChapters.map((c,i)=><div className="hex-step" key={c.id}>
           <div className={`hex ${i===chapterIndex?'current':i<chapterIndex?'done':''}`} style={{'--hc':c.accent,'--hs':c.soft,'--hd':c.deep}}>{i+1}</div>
           <small>{c.title}</small>
         </div>)}
