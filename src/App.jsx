@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { chapters, questions } from './questions'
-import { saveLead } from './supabase'
+import { saveLead, saveDiagnosis, getOrCreateAnonymousId } from './supabase'
 
 const AXIS = {
   OD:['유분','건조'],
@@ -84,6 +84,15 @@ export default function App(){
   const [recommendIntent,setRecommendIntent]=useState('')
   const [recommendMethods,setRecommendMethods]=useState([])
 
+  // Guards the auto-save-on-result effect below: true once this run's
+  // diagnosis row has been (or is being) written, so a StrictMode double
+  // effect-fire or an unrelated re-render on the result screen can never
+  // insert a second row for the same completed diagnosis. Cleared only
+  // when a fresh run starts (entering the journey screen), so doing the
+  // test again from scratch still creates a new row.
+  const diagnosisSavedRef=useRef(false)
+  const diagnosisIdRef=useRef(null)
+
   const toggleMethod=(key)=>setRecommendMethods(v=>v.includes(key)?v.filter(x=>x!==key):[...v,key])
 
   // Answers/progress state is untouched here — only the scroll position resets
@@ -93,6 +102,13 @@ export default function App(){
   useEffect(()=>{
     window.scrollTo(0,0)
   },[screen,chapterIndex,batchIndex,showInsight])
+
+  useEffect(()=>{
+    if(screen==='journey'){
+      diagnosisSavedRef.current=false
+      diagnosisIdRef.current=null
+    }
+  },[screen])
 
   const chapter=chapters[chapterIndex]
   const chapterQs=questions.filter(q=>q.chapter===chapter.id)
@@ -125,6 +141,34 @@ export default function App(){
     const type64=type16+(p.CB>=50?'C':'B')+(p.HQ>=50?'H':'Q')
     return {p,type16,type64,weather,tags}
   },[answers])
+
+  // Every completed diagnosis is saved as soon as the result screen is
+  // reached — with or without the visitor ever registering a contact —
+  // so this data accumulates for every anonymous visitor, not only the
+  // ones who fill in the lead form further down this screen. A failed
+  // save is only logged: it must never block or blank out the result UI.
+  useEffect(()=>{
+    if(screen!=='result') return
+    if(diagnosisSavedRef.current) return
+    diagnosisSavedRef.current=true
+    saveDiagnosis({
+      anonymous_id: getOrCreateAnonymousId(),
+      skin_type: analysis.type16,
+      skin64_candidate: analysis.type64,
+      oil_score: analysis.p.OD,
+      sensitivity_score: analysis.p.SR,
+      pigmentation_score: analysis.p.PN,
+      aging_score: analysis.p.WT,
+      congestion_score: analysis.p.CB,
+      heat_score: analysis.p.HQ,
+      answers,
+      skin_version: 'v3.3'
+    }).then(res=>{
+      if(res?.ok) diagnosisIdRef.current=res.id
+    }).catch(e=>{
+      console.error('진단 자동 저장 실패 (결과 화면에는 영향 없음):', e)
+    })
+  },[screen])
 
   const choose=(q,i)=>setAnswers(v=>({...v,[q.text]:i}))
 
@@ -176,6 +220,7 @@ export default function App(){
         recommend_methods: recommendMethods,
         answers,
         skin_version: 'v3.3',
+        diagnosis_id: diagnosisIdRef.current,
         source: 'beta-web'
       })
       setLeadStatus(res.mode === 'supabase'
