@@ -48,17 +48,13 @@ const METHOD_OPTIONS = [
 ]
 
 // DEEP 56-question flow: 14 four-question pages, with a short intermission
-// card every other page (after page index 1,3,5,7,9,11 — i.e. after pages
-// 2/4/6/8/10/12 of 14) instead of the old per-chapter transition screen.
-// `afterPage` is the 0-indexed page just completed. No accuracy/percentage
-// claims in the copy — only progress-feel language.
+// card after pages 4/8/12 of 14 (3 total) instead of the old per-chapter
+// transition screen. `afterPage` is the 0-indexed page just completed. No
+// accuracy/percentage claims in the copy — only progress-feel language.
 const DEEP_INTERMISSIONS = [
-  { afterPage: 1, title: '피부의 기본 성향이 조금씩 보이기 시작했어요.', sub: '지금까지의 답변으로 주요 피부 패턴을 확인하고 있어요.' },
-  { afterPage: 3, title: '고객님의 피부 타입이 한 단계 더 구체화되고 있어요.', sub: '이제 조금 더 세밀한 특성을 살펴볼게요.' },
-  { afterPage: 5, title: '좋아요. 피부의 특징이 점점 선명해지고 있어요.', sub: '비슷한 피부 타입 사이의 차이를 더 자세히 확인하고 있습니다.' },
-  { afterPage: 7, title: '절반 이상 진행했어요.', sub: '지금까지의 답변을 바탕으로 주요 피부 패턴을 정리하고 있어요.' },
-  { afterPage: 9, title: '거의 윤곽이 잡혔어요.', sub: '이제 경계에 있는 특성을 조금 더 세밀하게 확인할게요.' },
-  { afterPage: 11, title: '마지막 정밀 확인 단계예요.', sub: '몇 가지 질문만 더 확인하면 피부 성향과 현재 상태를 함께 정리할 수 있어요.' }
+  { afterPage: 3, title: '피부의 기본 성향이 조금씩 보이기 시작했어요.', sub: '지금까지의 답변을 바탕으로 고객님의 주요 피부 패턴을 확인하고 있어요.' },
+  { afterPage: 7, title: '절반 이상 진행했어요.', sub: '피부 성향과 현재 피부 컨디션을 나누어 조금 더 세밀하게 살펴보고 있어요.' },
+  { afterPage: 11, title: '마지막 정밀 확인 단계예요.', sub: '몇 가지 질문만 더 확인하면 고객님의 피부 특징을 한눈에 정리할 수 있어요.' }
 ]
 const RESULT_CALC_MESSAGE = { title: '분석이 거의 완성됐어요.', sub: '지금까지의 답변을 바탕으로 피부 타입과 현재 컨디션을 정리하고 있습니다.' }
 
@@ -165,7 +161,14 @@ export default function App(){
     [mode, activeQuestions]
   )
   const deepCurrentQs = deepPages[pageIndex] || []
-  const deepAllAnswered = deepCurrentQs.length>0 && deepCurrentQs.every(q=>answers[q.text]!==undefined)
+  // A multiSelect question (currently only the validation question) stores
+  // an array of chosen option indices in `answers[q.text]` instead of a
+  // single index — "answered" means at least one pick, not just "not
+  // undefined" (an empty array is still an array).
+  const isDeepAnswered = q => q.multiSelect
+    ? Array.isArray(answers[q.text]) && answers[q.text].length>0
+    : answers[q.text]!==undefined
+  const deepAllAnswered = deepCurrentQs.length>0 && deepCurrentQs.every(isDeepAnswered)
 
   const answeredCount = Object.keys(answers).length
   const totalQuestions = activeQuestions.length
@@ -253,7 +256,29 @@ export default function App(){
 
   // DEEP paginated flow: picking an answer only records it — no auto-advance,
   // the user must hit "다음" once all 4 questions on the page are answered.
-  const chooseDeep=(q,i)=>setAnswers(v=>({...v,[q.text]:i}))
+  const chooseDeep=(q,i)=>{
+    if(!q.multiSelect){ setAnswers(v=>({...v,[q.text]:i})); return }
+    setAnswers(v=>{
+      const current = Array.isArray(v[q.text]) ? v[q.text] : []
+      const opt = q.options[i]
+      let next
+      if(opt.exclusive){
+        // Tapping an exclusive option ("특별히 없음"/"잘 모르겠어요") always
+        // replaces the whole selection with just itself — tapping it again
+        // clears the question back to unanswered.
+        next = (current.length===1 && current[0]===i) ? [] : [i]
+      }else{
+        // Picking any regular option first drops whichever exclusive
+        // option was selected (the two states can never coexist), then
+        // toggles the tapped option in/out of the selection as usual.
+        const withoutExclusive = current.filter(idx=>!q.options[idx].exclusive)
+        next = withoutExclusive.includes(i)
+          ? withoutExclusive.filter(idx=>idx!==i)
+          : [...withoutExclusive, i]
+      }
+      return {...v, [q.text]: next}
+    })
+  }
 
   const nextDeepPage=()=>{
     if(!deepAllAnswered) return
@@ -547,9 +572,14 @@ export default function App(){
             <article className="question deep-question">
               <h3>{q.text}</h3>
               <div className="answers">
-                {q.options.map((o,i)=><button key={o.label} className={`answer ${answers[q.text]===i?'selected':''}`} onClick={()=>chooseDeep(q,i)}>
-                  <span className="mini-check">{answers[q.text]===i?'✓':''}</span><span>{o.label}</span>
-                </button>)}
+                {q.options.map((o,i)=>{
+                  const isSelected = q.multiSelect
+                    ? Array.isArray(answers[q.text]) && answers[q.text].includes(i)
+                    : answers[q.text]===i
+                  return <button key={o.label} className={`answer ${isSelected?'selected':''}`} onClick={()=>chooseDeep(q,i)}>
+                    <span className="mini-check">{isSelected?'✓':''}</span><span>{o.label}</span>
+                  </button>
+                })}
               </div>
             </article>
           </React.Fragment>)}

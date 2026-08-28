@@ -691,22 +691,33 @@ export const questions = [
     ]
   },
 
-  // ---- Validation (self-perception reference only — v4.1 addition) ----
+  // ---- Validation (self-perception reference only — v4.1, revised to a
+  // multi-select so it never forces a single-axis choice) ----
   // `validationOnly: true` is the explicit flag App.jsx's scoring loop
   // checks first and skips entirely: this question never contributes to
   // any TYPE axis sum/weight or to the STATE `weather` object, no matter
-  // what `axis`/`state` are set to. It exists purely so the result can
-  // later be compared against how the user already sees themselves; it is
-  // still saved like any other answer inside the raw `answers` blob.
+  // what `axis`/`state` are set to. `multiSelect: true` tells the DEEP
+  // quiz UI to store an array of selected option indices in `answers`
+  // instead of a single index, and to let several be picked at once. The
+  // two `exclusive: true` options ("특별히 없음"/"잘 모르겠어요") are kept
+  // mutually exclusive with every other option by the UI's selection
+  // logic, not by any scoring code — this question exists purely so the
+  // result can later be compared against how the user already sees
+  // themselves; it is still saved like any other answer inside the raw
+  // `answers` blob (as an array here, same as everywhere else).
   {
-    chapter: 'recent', axis: null, state: false, validationOnly: true, tag: 'self_perceived_type', modes: D,
-    text: '지금까지의 질문과 별개로, 평소 스스로 생각하는 내 피부 타입은 무엇인가요? (참고용이며 진단 결과 점수에는 반영되지 않아요)',
+    chapter: 'recent', axis: null, state: false, validationOnly: true, multiSelect: true, tag: 'self_perceived_type', modes: D,
+    text: '평소 내 피부에 해당한다고 느끼는 특징을 모두 골라주세요. (참고용이며 진단 결과 점수에는 반영되지 않아요)',
     options: [
-      { label: '건성', score: 0 },
-      { label: '지성', score: 1 },
-      { label: '복합성', score: 2 },
-      { label: '민감성', score: 3 },
-      { label: '잘 모르겠다', score: 4 }
+      { label: '건조하거나 당김이 느껴지는 편이에요', score: 0 },
+      { label: '유분이 많이 올라오는 편이에요', score: 1 },
+      { label: '피부가 쉽게 민감해지거나 따가운 편이에요', score: 2 },
+      { label: '잡티나 트러블 흔적이 잘 남는 편이에요', score: 3 },
+      { label: '주름이나 탄력 저하가 고민이에요', score: 4 },
+      { label: '모공이 잘 막히거나 트러블이 생기는 편이에요', score: 5 },
+      { label: '열감이나 붉어짐이 쉽게 나타나는 편이에요', score: 6 },
+      { label: '특별히 떠오르는 특징이 없어요', score: 7, exclusive: true },
+      { label: '잘 모르겠어요', score: 8, exclusive: true }
     ]
   }
 ];
