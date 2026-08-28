@@ -1,10 +1,19 @@
-// Question bank v4.0 — redesigned for two test lengths sharing one axis system.
+// Question bank v4.1 — redesigned for two test lengths sharing one axis system.
 //
 // QUICK 16 (mode "quick"): 4 axes (OD/SR/PN/WT), 18 questions, ~1-2 min.
-// DEEP  64 (mode "deep"):  6 axes (OD/SR/PN/WT/CB/HQ), 38 type questions
-//   (the same 18 used by QUICK, plus 20 more — including all of CB/HQ,
-//   which QUICK never asks) + 6 bonus STATE questions ("최근의 내 피부"),
-//   44 questions total, ~4-5 min.
+// DEEP  64 (mode "deep"):  6 axes (OD/SR/PN/WT/CB/HQ), 48 type questions
+//   (8 per axis — the same 18 used by QUICK plus 30 more, including all of
+//   CB/HQ, which QUICK never asks) + 7 bonus STATE questions ("최근의 내
+//   피부") + 1 validation-only self-perception question, 56 questions
+//   total, ~5-6 min.
+//
+// v4.1 added 2 questions to each of OD/PN/WT/CB/HQ (SR was already at 8) to
+// equalize every TYPE axis at 8 questions, 1 more STATE question, and the
+// first `validationOnly` question — a self-reported skin type used only as
+// a reference point against the computed result, never summed into any
+// axis or STATE score. All v4.0 questions, tags, text, and scoring are left
+// untouched; new items are appended after each axis's/chapter's existing
+// block so no existing array position moves.
 //
 // Each question carries `modes` (which test length(s) it appears in) and an
 // optional `weight` (default 1) — a small number of especially discriminative
@@ -167,6 +176,28 @@ export const questions = [
       { label: '유분 때문에 쉽게 무너진다', score: 3 }
     ]
   },
+  // -- v4.1 additions: seasonal extremity + product-amount dependence, not
+  // covered by the time-of-day / behavior-frequency questions above --
+  {
+    chapter: 'morning', axis: 'OD', state: false, tag: 'seasonal_extremity', modes: D,
+    text: '환절기(계절이 바뀔 때) 피부는 어느 쪽으로 더 크게 변하나요?',
+    options: [
+      { label: '겨울에 심하게 당기고 건조해진다', score: -3 },
+      { label: '겨울에 약간 건조한 정도', score: -1 },
+      { label: '계절이 바뀌어도 큰 차이가 없다', score: 1 },
+      { label: '여름에 유독 유분이 많아진다', score: 3 }
+    ]
+  },
+  {
+    chapter: 'morning', axis: 'OD', state: false, tag: 'moisturizer_need', modes: D,
+    text: '보습 제품을 얼마나 발라야 피부가 편안하다고 느끼나요?',
+    options: [
+      { label: '묵직한 크림을 듬뿍 발라도 금방 당긴다', score: -3 },
+      { label: '보습제를 넉넉히 발라야 편안하다', score: -1 },
+      { label: '적당량이면 무리 없다', score: 1 },
+      { label: '가벼운 제품만 발라도 유분기가 남는다', score: 3 }
+    ]
+  },
 
   // ---- SR (sensitive/resistant) — DEEP 8 / QUICK 5, anchors: fragrance, fragrance_avoid (x1.5) ----
   {
@@ -311,6 +342,29 @@ export const questions = [
       { label: '가장 큰 고민 중 하나다', score: 3 }
     ]
   },
+  // -- v4.1 additions: preventable sunspot formation + friction-induced
+  // pigmentation, not covered by the trouble-mark / bite / sun / fade /
+  // wound / tone-evenness questions above --
+  {
+    chapter: 'marks', axis: 'PN', state: false, tag: 'sunspot_formation', modes: D,
+    text: '자외선 차단을 신경 써도 기미나 잡티가 새로 생기는 편인가요?',
+    options: [
+      { label: '거의 생기지 않는다', score: -3 },
+      { label: '가끔 생긴다', score: -1 },
+      { label: '자주 생긴다', score: 2 },
+      { label: '차단해도 쉽게 생긴다', score: 3 }
+    ]
+  },
+  {
+    chapter: 'marks', axis: 'PN', state: false, tag: 'friction_pigmentation', modes: D,
+    text: '속옷 끈, 안경, 마스크 끈처럼 반복적으로 마찰되는 부위가 유독 어둡게 남나요?',
+    options: [
+      { label: '거의 없다', score: -3 },
+      { label: '약간 있다', score: -1 },
+      { label: '꽤 눈에 띈다', score: 2 },
+      { label: '뚜렷하게 어두운 자국이 남는다', score: 3 }
+    ]
+  },
 
   // ---- WT (aging/wrinkle) — DEEP 6 / QUICK 4, anchor: less_firm_vs_past (x1.5) ----
   {
@@ -371,6 +425,29 @@ export const questions = [
       { label: '하루 정도', score: -1 },
       { label: '이틀 이상', score: 2 },
       { label: '쉽게 회복되지 않는다', score: 3 }
+    ]
+  },
+  // -- v4.1 additions: dynamic-wrinkle recovery + volume loss, not covered
+  // by the static-line / sagging / press-test / dullness / recovery-speed
+  // questions above --
+  {
+    chapter: 'tired', axis: 'WT', state: false, tag: 'dynamic_line_recovery', modes: D,
+    text: '웃거나 찡그린 후 표정을 풀면 주름이 사라지는 데 얼마나 걸리나요?',
+    options: [
+      { label: '바로 사라진다', score: -3 },
+      { label: '몇 초 내로 사라진다', score: -1 },
+      { label: '꽤 오래 남아있다', score: 2 },
+      { label: '표정을 풀어도 자국처럼 남는다', score: 3 }
+    ]
+  },
+  {
+    chapter: 'tired', axis: 'WT', state: false, tag: 'volume_loss', modes: D,
+    text: '볼이나 관자놀이 등 얼굴에 볼륨이 예전보다 줄어든 느낌이 드나요?',
+    options: [
+      { label: '전혀 아니다', score: -3 },
+      { label: '약간', score: -1 },
+      { label: '꽤 그렇다', score: 2 },
+      { label: '확실히 홀쭉해졌다', score: 3 }
     ]
   },
 
@@ -435,6 +512,28 @@ export const questions = [
       { label: '매우 심해진다', score: 3 }
     ]
   },
+  // -- v4.1 additions: inflammatory breakouts + active-lesion duration, not
+  // covered by the six comedonal/occlusion-focused questions above --
+  {
+    chapter: 'pores', axis: 'CB', state: false, tag: 'inflamed_breakout', modes: D,
+    text: '붉고 아프게 부어오르는 염증성 트러블(뾰루지)이 생기는 편인가요?',
+    options: [
+      { label: '거의 없다', score: -3 },
+      { label: '가끔 생긴다', score: -1 },
+      { label: '자주 생긴다', score: 2 },
+      { label: '매우 자주, 크게 생긴다', score: 3 }
+    ]
+  },
+  {
+    chapter: 'pores', axis: 'CB', state: false, tag: 'breakout_duration', modes: D,
+    text: '트러블이 한 번 생기면 가라앉기까지 보통 얼마나 걸리나요?',
+    options: [
+      { label: '2~3일 이내', score: -3 },
+      { label: '일주일 정도', score: -1 },
+      { label: '1~2주 이상', score: 2 },
+      { label: '한 달 가까이 지속되기도 한다', score: 3 }
+    ]
+  },
 
   // ---- HQ (heat-reactive/quiet) — DEEP-only, 6 questions, anchor: heat_face_flush (x1.5) ----
   {
@@ -497,6 +596,29 @@ export const questions = [
       { label: '피부 컨디션이 확실히 나빠진다', score: 3 }
     ]
   },
+  // -- v4.1 additions: cold/temperature-swing reaction + persistent (non-
+  // triggered) flush, not covered by the six heat-trigger questions above,
+  // which are all about heat exposure specifically --
+  {
+    chapter: 'heat', axis: 'HQ', state: false, tag: 'cold_transition_reaction', modes: D,
+    text: '실내외 온도차가 큰 곳을 오가면(예: 냉난방 공간 ↔ 바깥) 얼굴이 붉어지거나 화끈거리나요?',
+    options: [
+      { label: '거의 없다', score: -3 },
+      { label: '가끔', score: -1 },
+      { label: '자주', score: 2 },
+      { label: '매우 자주, 눈에 띄게', score: 3 }
+    ]
+  },
+  {
+    chapter: 'heat', axis: 'HQ', state: false, tag: 'persistent_flush', modes: D,
+    text: '특별한 자극이 없어도 평소 볼이나 코 주변에 붉은기가 남아있는 편인가요?',
+    options: [
+      { label: '전혀 아니다', score: -3 },
+      { label: '약간 있다', score: -1 },
+      { label: '꽤 뚜렷하다', score: 2 },
+      { label: '항상 붉은기가 있다', score: 3 }
+    ]
+  },
 
   // ---- STATE (recent condition, not part of TYPE scoring) — DEEP-only bonus chapter ----
   {
@@ -554,6 +676,37 @@ export const questions = [
       { label: '1개 정도', score: 1 },
       { label: '2~3개', score: 2 },
       { label: '여러 제품을 바꿨다', score: 3 }
+    ]
+  },
+  // -- v4.1 addition: current skin texture, not covered by the six existing
+  // STATE questions (sleep/dehydration/trouble/heat/stress/new_product) --
+  {
+    chapter: 'recent', axis: 'texture', state: true, tag: 'texture', modes: D,
+    text: '요즘 피부결(까칠함·각질)은 어떤가요?',
+    options: [
+      { label: '매끄럽다', score: 0 },
+      { label: '약간 까칠하다', score: 1 },
+      { label: '꽤 까칠하다', score: 2 },
+      { label: '각질이 심하게 일어난다', score: 3 }
+    ]
+  },
+
+  // ---- Validation (self-perception reference only — v4.1 addition) ----
+  // `validationOnly: true` is the explicit flag App.jsx's scoring loop
+  // checks first and skips entirely: this question never contributes to
+  // any TYPE axis sum/weight or to the STATE `weather` object, no matter
+  // what `axis`/`state` are set to. It exists purely so the result can
+  // later be compared against how the user already sees themselves; it is
+  // still saved like any other answer inside the raw `answers` blob.
+  {
+    chapter: 'recent', axis: null, state: false, validationOnly: true, tag: 'self_perceived_type', modes: D,
+    text: '지금까지의 질문과 별개로, 평소 스스로 생각하는 내 피부 타입은 무엇인가요? (참고용이며 진단 결과 점수에는 반영되지 않아요)',
+    options: [
+      { label: '건성', score: 0 },
+      { label: '지성', score: 1 },
+      { label: '복합성', score: 2 },
+      { label: '민감성', score: 3 },
+      { label: '잘 모르겠다', score: 4 }
     ]
   }
 ];

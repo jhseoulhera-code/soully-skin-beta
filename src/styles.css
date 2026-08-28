@@ -216,3 +216,17 @@
 .cta:disabled{opacity:.55;cursor:not-allowed}
 .unlock-teaser p{margin-bottom:14px}
 .detail64-card p{margin-bottom:2px}
+
+
+/* v4.1 DEEP 56-question / 14-page flow */
+.deep-question-list{display:grid;gap:0}
+.deep-question{padding:18px 4px}
+.deep-divider{height:1px;background:color-mix(in srgb,var(--accent) 22%,white);margin:2px 6px}
+.overall-progress-sub{margin-top:8px;font-size:11px;color:#9089a0;text-align:right}
+.intermission-screen{cursor:pointer}
+.intermission-spark{clip-path:none;border-radius:50%;background:linear-gradient(145deg,#eee8ff,#fff);color:#8b73e1;width:76px;height:76px;font-size:34px}
+
+@media(max-width:600px){
+  .deep-question{padding:20px 2px}
+  .answer{min-height:56px}
+}
