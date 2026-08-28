@@ -44,6 +44,7 @@
 .question-panel{background:color-mix(in srgb,var(--soft) 78%,white);border:1px solid color-mix(in srgb,var(--accent) 22%,white);border-radius:24px;padding:18px;display:grid;gap:16px}
 .question{background:rgba(255,255,255,.72);border:1px solid color-mix(in srgb,var(--accent) 12%,white);border-radius:18px;padding:16px}
 .question h3{margin:0 0 13px;font-size:17px;line-height:1.5}
+.question-helper{margin:-8px 0 13px;font-size:12px;color:#918aa0;line-height:1.5}
 .answers{display:grid;gap:9px}.answer{min-height:52px;border-radius:14px;border:1px solid color-mix(in srgb,var(--accent) 24%,white);background:rgba(255,255,255,.78);padding:12px 14px;display:flex;align-items:center;gap:12px;text-align:left;cursor:pointer;color:#342c3f;transition:.18s}
 .answer:hover{border-color:var(--accent)}.answer.selected{background:color-mix(in srgb,var(--accent) 34%,white);border-color:var(--deep);box-shadow:0 8px 18px color-mix(in srgb,var(--accent) 16%,transparent);font-weight:800;color:#2a2334}
 .mini-check{width:24px;height:24px;flex:0 0 24px;display:grid;place-items:center;clip-path:polygon(25% 6.7%,75% 6.7%,100% 50%,75% 93.3%,25% 93.3%,0 50%);background:rgba(255,255,255,.65);color:#fff}

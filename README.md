@@ -1,5 +1,20 @@
 # SOULLY Skin Type Beta v3.2
 
+## 질문 데이터 모델 안정화 (algorithm V1.0 prep)
+- 질문/문항/점수식/타입판정 내용은 이번 작업에서 변경 없음 — `src/questions.js`
+  각 질문에 `id`(기존 `tag` 승격, 답변 상태·DB 저장 키로 사용)와
+  `scale_type/time_reference/type_weight/state_weight/reverse_scored/
+  validation_only/question_version/helper_text` 메타데이터만 추가
+- 점수 계산은 `src/scoring.js`로 분리(순수 함수, App.jsx 밖에서 단위테스트 가능).
+  리팩터링 전/후 44문항 전체 응답 기준 `analysis.p`/`type16`/`type64` 완전 동일함을
+  자동 비교 테스트로 검증(리포트 참고)
+- `supabase-migration-question-data-model.sql` 실행 시(`diagnosis-tracking.sql` 이후)
+  `diagnosis_answers.answer_values`(다중선택용, nullable) 컬럼과
+  `question_definitions`(질문 버전 스냅샷, 관리자 전용 조회) 테이블 추가.
+  둘 다 additive — 기존 row/컬럼 변경·삭제 없음
+- multi_select/numeric_0_10/likert_5 스케일은 구조만 준비되어 있고 실제 문항에는
+  아직 적용 안 됨 (`src/questions.js` 상단 데이터 모델 주석 참고)
+
 ## v4.0 익명 진단 추적 + MY SKIN HISTORY
 - 비회원도 로그인 없이 끝까지 진단 가능 (기존과 동일)
 - **필수 설정**: Supabase 대시보드 Authentication > Sign In / Providers >

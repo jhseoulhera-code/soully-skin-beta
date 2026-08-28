@@ -17,6 +17,21 @@ export const QUESTION_SET_VERSION = 'v4.0'
 
 export const RESULT_VERSION = 'v1'
 
+// A question's scale_type (src/questions.js). Descriptive metadata only —
+// see src/scoring.js's computeAnalysis() for exactly which of these are
+// actually scored today (bipolar_4 and the STATE ordinal_3/ordinal_4
+// questions) versus structurally supported but not yet scored
+// (multi_select, numeric_0_10 — no current question uses either).
+export const SCALE_TYPE = {
+  BIPOLAR_4: 'bipolar_4',
+  ORDINAL_3: 'ordinal_3',
+  ORDINAL_4: 'ordinal_4',
+  LIKERT_5: 'likert_5',
+  NUMERIC_0_10: 'numeric_0_10',
+  CATEGORICAL: 'categorical',
+  MULTI_SELECT: 'multi_select'
+}
+
 /**
  * @typedef {Object} Visitor
  * @property {string} id
@@ -58,13 +73,35 @@ export const RESULT_VERSION = 'v1'
  * @typedef {Object} DiagnosisAnswer
  * @property {string} id
  * @property {string} session_id
- * @property {string} question_id
- * @property {number|null} answer_value
+ * @property {string} question_id Matches questions.js's `id` (was `tag`
+ *   before the algorithm-V1.0-prep data model pass) — never the question's
+ *   `text`, so editing wording never breaks matching against stored answers.
+ * @property {number|null} answer_value Single-value scale_types
+ *   (bipolar_4/ordinal_3/ordinal_4/likert_5/numeric_0_10) only.
  * @property {string|null} answer_label
  * @property {number|null} option_index
+ * @property {Array<string|number>|null} answer_values multi_select only —
+ *   the selected options (as an array), independent of answer_value/
+ *   answer_label/option_index which stay null for a multi-select row. No
+ *   current question uses scale_type 'multi_select' yet.
  * @property {number|null} response_time_ms
  * @property {string} answered_at
  * @property {string|null} question_version
+ */
+
+/**
+ * @typedef {Object} QuestionDefinition
+ * @property {string} id
+ * @property {string} question_id
+ * @property {string} question_version
+ * @property {string} text
+ * @property {string} scale_type One of SCALE_TYPE's values.
+ * @property {string|null} axis
+ * @property {number|null} type_weight
+ * @property {number|null} state_weight
+ * @property {boolean} reverse_scored
+ * @property {Array<{label:string,score:number|null}>} options_json
+ * @property {string} created_at
  */
 
 /**

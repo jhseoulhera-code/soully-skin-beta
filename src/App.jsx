@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { chapters, questions } from './questions'
+import { computeAnalysis } from './scoring'
 import { saveLead } from './supabase'
 import { AuthProvider, useAuth } from './auth'
 import AuthPanel from './AuthPanel'
@@ -23,15 +24,6 @@ const AXIS = {
 }
 
 const chunk = (arr, size=2) => arr.reduce((acc,_,i)=>(i%size?acc: [...acc, arr.slice(i,i+size)]),[])
-
-// weightTotal is the sum of each answered question's weight (default 1), not
-// a plain count — a weight-1.5 "anchor" question counts for 1.5x as much of
-// the axis's -3..+3 range on both sides of the average.
-function pct(weightedSum,weightTotal){
-  if(!weightTotal) return 50
-  const max=weightTotal*3
-  return Math.max(0,Math.min(100,Math.round(((weightedSum+max)/(max*2))*100)))
-}
 
 const AXIS_META = {
   OD: ['유분', '#B9A7F3'],
@@ -219,34 +211,11 @@ function DiagnosisApp(){
   const totalQuestions = activeQuestions.length
   const overallPercent = totalQuestions ? Math.min(100, Math.round((answeredCount / totalQuestions) * 100)) : 0
 
-  const analysis=useMemo(()=>{
-    const sums={OD:0,SR:0,PN:0,WT:0,CB:0,HQ:0}
-    const weights={OD:0,SR:0,PN:0,WT:0,CB:0,HQ:0}
-    const weather={}
-    const tags={}
-    activeQuestions.forEach(q=>{
-      const picked=answers[q.text]
-      if(picked===undefined) return
-      const opt=q.options[picked]
-      if(q.state) weather[q.axis]=opt.score
-      else if(sums[q.axis]!==undefined){
-        const w=q.weight||1
-        sums[q.axis]+=opt.score*w; weights[q.axis]+=w
-        if(q.tag) tags[q.tag]=opt.score
-      }
-    })
-    const p={}
-    Object.keys(sums).forEach(k=>p[k]=pct(sums[k],weights[k]))
-    const type16=(p.OD>=50?'O':'D')+(p.SR>=50?'S':'R')+(p.PN>=50?'P':'N')+(p.WT>=50?'W':'T')
-    // type64 only exists once CB/HQ were actually asked (DEEP mode) — QUICK
-    // never measures those two axes, so it never gets a real 64-code.
-    const hasDeepAxes = weights.CB>0 && weights.HQ>0
-    const type64 = hasDeepAxes ? type16+(p.CB>=50?'C':'B')+(p.HQ>=50?'H':'Q') : null
-    // Per policy: a user who has both a 16 and a 64 result uses the 64
-    // result as their representative code.
-    const primaryType = type64 || type16
-    return {p,type16,type64,primaryType,weather,tags}
-  },[answers,activeQuestions])
+  // Scoring itself now lives in src/scoring.js (extracted, framework-free,
+  // unit-tested against the pre-extraction implementation for the full
+  // 44-question set) — this just wires it to the current answers/questions.
+  // answers is keyed by question id, not question text (see src/questions.js).
+  const analysis = useMemo(() => computeAnalysis(activeQuestions, answers), [answers, activeQuestions])
 
   // Holds the pending "advance to next question" timer. Re-selecting an
   // answer (or picking a different one) before it fires cancels and
@@ -256,14 +225,15 @@ function DiagnosisApp(){
   const advanceTimerRef=useRef(null)
 
   const choose=(q,i)=>{
-    setAnswers(v=>({...v,[q.text]:i}))
+    setAnswers(v=>({...v,[q.id]:i}))
     if(sessionId){
       const responseTimeMs=Date.now()-questionShownAtRef.current
       recordAnswer(sessionId,{
-        questionId: q.tag,
+        questionId: q.id,
         answerValue: q.options[i].score,
         answerLabel: q.options[i].label,
         optionIndex: i,
+        questionVersion: q.question_version,
         responseTimeMs
       })
     }
@@ -274,6 +244,35 @@ function DiagnosisApp(){
       advanceTimerRef.current=null
       nextBatch()
     },200)
+  }
+
+  // Structural readiness for a future multi_select question (e.g. the
+  // planned "현재 고민 최대 2개 선택") — no current question uses
+  // scale_type 'multi_select', so this never fires today, but the state
+  // shape and save path are real: answers[q.id] becomes an array of picked
+  // option indices instead of a single index, and recordAnswer stores it in
+  // diagnosis_answers.answer_values (a separate nullable column — see the
+  // migration) without touching the single-select answer_value/option_index
+  // columns. computeAnalysis (src/scoring.js) deliberately excludes
+  // multi_select questions from axis scoring for now; no scoring formula
+  // exists for them yet.
+  const chooseMulti=(q,i)=>{
+    setAnswers(v=>{
+      const current = Array.isArray(v[q.id]) ? v[q.id] : []
+      const next = current.includes(i) ? current.filter(x=>x!==i) : [...current,i]
+      return {...v,[q.id]:next}
+    })
+    if(sessionId){
+      const picked = Array.isArray(answers[q.id]) ? answers[q.id] : []
+      const next = picked.includes(i) ? picked.filter(x=>x!==i) : [...picked,i]
+      const responseTimeMs=Date.now()-questionShownAtRef.current
+      recordAnswer(sessionId,{
+        questionId: q.id,
+        answerValues: next.map(idx=>q.options[idx].label),
+        questionVersion: q.question_version,
+        responseTimeMs
+      })
+    }
   }
 
   const nextBatch=()=>{
@@ -598,18 +597,37 @@ function DiagnosisApp(){
       <div className="category">{chapter.label}</div>
 
       <div className="question-panel">
-        {currentBatch.map(q=><article className="question" key={q.text}>
+        {currentBatch.map(q=><article className="question" key={q.id}>
           <h3>{q.text}</h3>
-          <div className="answers">
-            {q.options.map((o,i)=><button key={o.label} className={`answer ${answers[q.text]===i?'selected':''}`} onClick={()=>choose(q,i)}>
-              <span className="mini-check">{answers[q.text]===i?'✓':''}</span><span>{o.label}</span>
-            </button>)}
-          </div>
+          {q.helper_text && <p className="question-helper">{q.helper_text}</p>}
+          {q.scale_type==='multi_select' ? (
+            <div className="answers">
+              {q.options.map((o,i)=>{
+                const picked = Array.isArray(answers[q.id]) && answers[q.id].includes(i)
+                return <button key={o.label} className={`answer ${picked?'selected':''}`} onClick={()=>chooseMulti(q,i)}>
+                  <span className="mini-check">{picked?'✓':''}</span><span>{o.label}</span>
+                </button>
+              })}
+            </div>
+          ) : (
+            <div className="answers">
+              {q.options.map((o,i)=><button key={o.label} className={`answer ${answers[q.id]===i?'selected':''}`} onClick={()=>choose(q,i)}>
+                <span className="mini-check">{answers[q.id]===i?'✓':''}</span><span>{o.label}</span>
+              </button>)}
+            </div>
+          )}
         </article>)}
       </div>
 
       <footer className="nav">
         <button className="back back-solo" onClick={prev} disabled={chapterIndex===0&&batchIndex===0}>← 이전</button>
+        {currentBatch[0]?.scale_type==='multi_select' && (
+          <button
+            className="cta themed-btn"
+            disabled={!(Array.isArray(answers[currentBatch[0].id]) && answers[currentBatch[0].id].length)}
+            onClick={nextBatch}
+          >다음</button>
+        )}
       </footer>
     </section>
   </main>

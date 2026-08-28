@@ -89,18 +89,30 @@ export async function createDiagnosisSession(testType) {
 // forward for abandoned-session analysis. Upserts on (session_id,
 // question_id) so navigating back and changing an answer updates the same
 // row instead of creating a duplicate.
-export async function recordAnswer(sessionId, { questionId, answerValue, answerLabel, optionIndex, responseTimeMs }) {
+//
+// answerValues (an array) is for multi_select questions — see
+// answer_values in the migration and chooseMulti() in App.jsx. It's a
+// separate nullable column from answer_value/answer_label/option_index, so
+// existing single-select rows (which only ever set those three) are
+// completely unaffected; a multi-select row leaves answer_value/
+// answer_label/option_index null instead.
+//
+// questionVersion lets a single question's own version travel with its
+// answer (falls back to the module-level QUESTION_SET_VERSION if the
+// caller doesn't pass one, for any other call site).
+export async function recordAnswer(sessionId, { questionId, answerValue, answerLabel, optionIndex, answerValues, questionVersion, responseTimeMs }) {
   if (!supabase || !sessionId) return
   const [answerRes, progressRes] = await Promise.all([
     supabase.from('diagnosis_answers').upsert({
       session_id: sessionId,
       question_id: questionId,
-      answer_value: answerValue,
-      answer_label: answerLabel,
-      option_index: optionIndex,
+      answer_value: answerValue ?? null,
+      answer_label: answerLabel ?? null,
+      option_index: optionIndex ?? null,
+      answer_values: answerValues ?? null,
       response_time_ms: responseTimeMs,
       answered_at: new Date().toISOString(),
-      question_version: QUESTION_SET_VERSION
+      question_version: questionVersion || QUESTION_SET_VERSION
     }, { onConflict: 'session_id,question_id' }),
     supabase.from('diagnosis_sessions')
       .update({ current_question: questionId })
