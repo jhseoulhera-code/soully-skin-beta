@@ -20,7 +20,10 @@ export const RESULT_VERSION = 'v1'
 /**
  * @typedef {Object} Visitor
  * @property {string} id
- * @property {string} visitor_id
+ * @property {string} visitor_id auth.uid() of this browser's Supabase Auth
+ *   session (anonymous or real — see ensureIdentity in src/auth.jsx), not a
+ *   client-generated value. Doubles as the FK ownership column every RLS
+ *   policy checks against.
  * @property {string} created_at
  * @property {string|null} first_source
  * @property {string|null} first_campaign
@@ -31,8 +34,13 @@ export const RESULT_VERSION = 'v1'
  * @typedef {Object} DiagnosisSession
  * @property {string} id
  * @property {string} session_id
- * @property {string} visitor_id
- * @property {string|null} user_id
+ * @property {string} visitor_id The row's true owner (= auth.uid() at
+ *   creation, anonymous or real) — this is what RLS checks, and it never
+ *   changes after creation.
+ * @property {string|null} user_id Nullable "this is a real, signed-up
+ *   member" marker, filled in by markVisitorAsMember() once the visitor
+ *   converts. NOT used for access control — only for MY SKIN HISTORY /
+ *   analytics filtering (e.g. WHERE user_id = ...).
  * @property {'QUICK'|'DEEP'} test_type
  * @property {'started'|'completed'|'abandoned'} status
  * @property {string|null} current_question
@@ -63,7 +71,8 @@ export const RESULT_VERSION = 'v1'
  * @typedef {Object} DiagnosisResult
  * @property {string} id
  * @property {string} session_id
- * @property {string|null} user_id
+ * @property {string|null} user_id Same nullable "real member" marker as on
+ *   DiagnosisSession — not an access-control column.
  * @property {number|null} oil_score
  * @property {number|null} hydration_score
  * @property {number|null} sensitivity_score

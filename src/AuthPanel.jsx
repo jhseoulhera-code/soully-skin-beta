@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { signUpWithEmail, signInWithEmail, signInWithKakao } from './auth'
+import { convertAnonymousToMember, signInExistingMember, linkKakaoIdentity } from './auth'
 
 // Signup/login modal used from the result screen's "내 피부 변화 저장하기" CTA.
 // Deliberately reuses existing lead-card/contact-input/method-tabs styling
@@ -21,18 +21,22 @@ export default function AuthPanel({ onSuccess, onClose }) {
     }
     setBusy(true)
     setStatus('')
-    const fn = mode === 'signup' ? signUpWithEmail : signInWithEmail
+    const fn = mode === 'signup' ? convertAnonymousToMember : signInExistingMember
     const { data, error } = await fn(value, password)
     setBusy(false)
     if (error) {
       setStatus(error.message || '처리 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.')
       return
     }
-    if (mode === 'signup' && !data?.session) {
+    // Converting an anonymous session (signup) sends a confirmation email
+    // when the project requires one — until it's confirmed the session is
+    // still anonymous (is_anonymous stays true), so treat that as pending
+    // rather than success.
+    if (mode === 'signup' && data?.user?.is_anonymous !== false) {
       setStatus('가입 확인 메일을 보냈어요. 메일함을 확인한 뒤 다시 로그인해주세요.')
       return
     }
-    onSuccess?.(data?.user ?? null)
+    onSuccess?.(data?.user ?? null, mode)
   }
 
   return (
@@ -75,7 +79,7 @@ export default function AuthPanel({ onSuccess, onClose }) {
           className="auth-kakao"
           disabled
           title="카카오 로그인은 아직 준비 중이에요"
-          onClick={signInWithKakao}
+          onClick={linkKakaoIdentity}
         >
           카카오로 시작하기 (준비중)
         </button>

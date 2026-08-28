@@ -15,6 +15,16 @@ function formatDate(value) {
   return new Date(value).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
+// Two results are only safe to compare score-for-score if they were scored
+// by the same algorithm against the same question set — otherwise a score
+// delta could just reflect a changed scoring formula or question bank, not
+// an actual skin change.
+function sameVersion(a, b) {
+  return !!a && !!b &&
+    a.session?.algorithm_version === b.session?.algorithm_version &&
+    a.session?.question_set_version === b.session?.question_set_version
+}
+
 // Members-only screen: past diagnosis_results for this user, newest first,
 // each preserved as its own row (no overwriting), plus a latest-vs-previous
 // comparison. Reuses phone-card/lead-kicker/mode-badge/muted styling from
@@ -39,6 +49,7 @@ export default function SkinHistory({ userId, onClose }) {
 
   const latest = items[0]
   const previous = items[1]
+  const comparable = sameVersion(latest, previous)
   const representative = getRepresentativeResult(items)
 
   return <main className="screen">
@@ -54,7 +65,7 @@ export default function SkinHistory({ userId, onClose }) {
 
       {latest && previous && <div className="history-block">
         <h3>최근 변화</h3>
-        {AXIS_ROWS.map(([key, label]) => {
+        {comparable ? AXIS_ROWS.map(([key, label]) => {
           const cur = latest[key]
           const prev = previous[key]
           if (cur == null || prev == null) return null
@@ -62,7 +73,10 @@ export default function SkinHistory({ userId, onClose }) {
             <span>{label}</span>
             <b>{prev} → {cur}</b>
           </div>
-        })}
+        }) : <div className="insight-card">
+          <b>진단 기준이 변경되어 직접 비교가 제한됩니다</b>
+          <p>이전 진단과 알고리즘 또는 문항 구성이 달라 점수를 그대로 비교할 수 없어요. 두 결과 모두 아래 기록에는 그대로 남아있어요.</p>
+        </div>}
       </div>}
 
       {representative && <div className="history-block">

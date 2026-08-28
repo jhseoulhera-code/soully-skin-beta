@@ -6,13 +6,12 @@ import AuthPanel from './AuthPanel'
 import SkinHistory from './SkinHistory'
 import {
   ensureVisitorRecord,
-  getOrCreateVisitorId,
   createDiagnosisSession,
   recordAnswer,
   completeSession,
   saveDiagnosisResult,
-  getCurrentUserId,
-  linkVisitorSessionsToUser
+  markVisitorAsMember,
+  replayCurrentDiagnosisForNewIdentity
 } from './diagnosisTracking'
 
 const AXIS = {
@@ -105,7 +104,7 @@ export default function App(){
 }
 
 function DiagnosisApp(){
-  const { user } = useAuth()
+  const { user, isMember } = useAuth()
   const [screen,setScreen]=useState('landing')
   const [mode,setMode]=useState(null) // 'quick' (16, 4-axis) | 'deep' (64, 6-axis)
   const [chapterIndex,setChapterIndex]=useState(0)
@@ -136,6 +135,12 @@ function DiagnosisApp(){
   // Reset when the current question changes, so response_time_ms measures
   // time-on-question rather than time-since-app-open.
   const questionShownAtRef=useRef(Date.now())
+  // Synchronous mutex for startDiagnosis (see below): the "처음부터
+  // 시작하기" button awaits session creation before navigating, so without
+  // this a fast double-click could still fire two createDiagnosisSession
+  // calls before the first one disables the button via re-render.
+  const startingSessionRef=useRef(false)
+  const [startingDiagnosis,setStartingDiagnosis]=useState(false)
 
   useEffect(()=>{ ensureVisitorRecord() },[])
 
@@ -149,11 +154,33 @@ function DiagnosisApp(){
     resultSavedForRef.current=sessionId
     ;(async()=>{
       await completeSession(sessionId)
-      const uid=await getCurrentUserId()
-      await saveDiagnosisResult(sessionId, uid, analysis, mode)
+      await saveDiagnosisResult(sessionId, analysis, mode)
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[screen,sessionId])
+
+  // Single entry point into the quiz: every path that leads to the first
+  // question (currently just the journey screen's "처음부터 시작하기"
+  // button, including the QUICK result screen's "DEEP 64 정밀진단
+  // 받아보기" path, which routes back through this same journey screen)
+  // goes through here, so exactly one diagnosis_session is ever created per
+  // attempt and it always exists before the first question is shown.
+  const startDiagnosis=async()=>{
+    if(startingSessionRef.current || !mode) return
+    startingSessionRef.current=true
+    setStartingDiagnosis(true)
+    try{
+      const { sessionId: newSessionId } = await createDiagnosisSession(mode.toUpperCase())
+      setChapterIndex(0);setBatchIndex(0);setShowInsight(false)
+      resultSavedForRef.current=null
+      setSavedToAccount(false)
+      setSessionId(newSessionId)
+      setScreen('test')
+    }finally{
+      startingSessionRef.current=false
+      setStartingDiagnosis(false)
+    }
+  }
 
   const toggleMethod=(key)=>setRecommendMethods(v=>v.includes(key)?v.filter(x=>x!==key):[...v,key])
 
@@ -326,14 +353,26 @@ function DiagnosisApp(){
     }
   }
 
-  // Links this browser's not-yet-linked anonymous sessions to the user who
-  // just signed up/in, and marks the just-computed result as saved (see
-  // #7/#8 of the CTA block on the result screen below).
-  const handleAuthSuccess = async (authUser) => {
+  // authMode is 'signup' (converted the current anonymous session — same
+  // auth.uid() throughout, so existing rows just need their `user_id`
+  // marker backfilled) or 'signin' (switched to a different, pre-existing
+  // account — auth.uid() changed, so the diagnosis just taken is instead
+  // re-saved fresh under the new identity). See diagnosisTracking.js and
+  // the SQL migration's security note for why these need different handling.
+  const handleAuthSuccess = async (authUser, authMode) => {
     setShowAuthPanel(false)
     if(!authUser) return // email-confirmation-pending signup: no session yet
-    const visitorId = getOrCreateVisitorId()
-    await linkVisitorSessionsToUser(authUser.id, visitorId)
+    if(authMode==='signup'){
+      await markVisitorAsMember()
+    }else{
+      await replayCurrentDiagnosisForNewIdentity({
+        testType: mode.toUpperCase(),
+        questions: activeQuestions,
+        answers,
+        analysis,
+        mode
+      })
+    }
     setSavedToAccount(true)
   }
 
@@ -350,7 +389,7 @@ function DiagnosisApp(){
       <div className="kicker">SKIN TYPE BETA</div>
       <p>피부의 일상 반응을 따라가며<br/>나만의 피부 성향을 섬세하게 분석해요.</p>
       <div className="meta"><span>회원가입 없음</span><span>무료</span></div>
-      {user && <button className="text-btn" onClick={()=>setScreen('history')}>MY SKIN HISTORY 보기</button>}
+      {isMember && <button className="text-btn" onClick={()=>setScreen('history')}>MY SKIN HISTORY 보기</button>}
 
       <div className="mode-picker">
         <button className="mode-card mode-card--quick" onClick={()=>{setMode('quick');setScreen('journey')}}>
@@ -382,13 +421,9 @@ function DiagnosisApp(){
           <i>{i===0?'START':'•'}</i>
         </div>)}
       </div>
-      <button className="cta purple" onClick={async ()=>{
-        setChapterIndex(0);setBatchIndex(0);setShowInsight(false);setScreen('test')
-        resultSavedForRef.current=null
-        setSavedToAccount(false)
-        const { sessionId: newSessionId } = await createDiagnosisSession(mode.toUpperCase())
-        setSessionId(newSessionId)
-      }}>처음부터 시작하기</button>
+      <button className="cta purple" onClick={startDiagnosis} disabled={startingDiagnosis}>
+        {startingDiagnosis?'준비 중...':'처음부터 시작하기'}
+      </button>
     </section>
   </main>
 
@@ -509,7 +544,7 @@ function DiagnosisApp(){
         </div>}
 
         <div className="lead-card save-history-card">
-          {user ? <>
+          {isMember ? <>
             <h3>{savedToAccount ? '오늘의 결과가 저장되었어요' : '이 결과는 내 계정에 저장돼요'}</h3>
             <p>MY SKIN HISTORY에서 이전 결과와 비교해볼 수 있어요.</p>
             <button className="cta purple" onClick={()=>setScreen('history')}>MY SKIN HISTORY 보기</button>
