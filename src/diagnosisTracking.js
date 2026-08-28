@@ -181,35 +181,14 @@ export async function markVisitorAsMember() {
   if (resultError) console.error('markVisitorAsMember/results', resultError)
 }
 
-// Called after "로그인" to a DIFFERENT, pre-existing account succeeds. That
-// switch changes auth.uid(), so the diagnosis just taken under the old
-// (now-abandoned) anonymous identity can no longer be reassigned — RLS
-// correctly has no way to move ownership across identities (see the SQL
-// migration's security note). Instead, this replays the same save calls
-// used during the diagnosis itself (createDiagnosisSession -> recordAnswer
-// per answered question -> completeSession -> saveDiagnosisResult) so the
-// just-completed result also exists as a fresh row owned by the new
-// identity from the start. Only the just-finished diagnosis is replayed —
-// older anonymous history on this browser under the previous identity is
-// not retroactively merged into the newly-logged-in account.
-export async function replayCurrentDiagnosisForNewIdentity({ testType, questions, answers, analysis, mode }) {
-  if (!supabase) return
-  const { sessionId } = await createDiagnosisSession(testType)
-  for (const q of questions) {
-    const picked = answers[q.text]
-    if (picked === undefined) continue
-    const opt = q.options[picked]
-    await recordAnswer(sessionId, {
-      questionId: q.tag,
-      answerValue: opt.score,
-      answerLabel: opt.label,
-      optionIndex: picked,
-      responseTimeMs: null
-    })
-  }
-  await completeSession(sessionId)
-  await saveDiagnosisResult(sessionId, analysis, mode)
-}
+// Note: "로그인" to a DIFFERENT, pre-existing account (auth.uid() changes)
+// no longer needs anything here — signInExistingMember() in src/auth.jsx
+// mints and redeems a server-verified handoff claim (create_handoff_claim /
+// claim_handoff RPCs) around the identity switch itself, so every completed
+// diagnosis this browser's anonymous identity owned is already reassigned
+// to the new account by the time that call resolves. See the SQL
+// migration's "Anonymous -> existing member handoff" section for why that
+// has to be a SECURITY DEFINER RPC rather than a client-side UPDATE.
 
 // MY SKIN HISTORY data: every completed diagnosis result belonging to this
 // member, newest first, each carrying its parent session's test_type and

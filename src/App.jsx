@@ -10,8 +10,7 @@ import {
   recordAnswer,
   completeSession,
   saveDiagnosisResult,
-  markVisitorAsMember,
-  replayCurrentDiagnosisForNewIdentity
+  markVisitorAsMember
 } from './diagnosisTracking'
 
 const AXIS = {
@@ -353,25 +352,18 @@ function DiagnosisApp(){
     }
   }
 
-  // authMode is 'signup' (converted the current anonymous session — same
-  // auth.uid() throughout, so existing rows just need their `user_id`
-  // marker backfilled) or 'signin' (switched to a different, pre-existing
-  // account — auth.uid() changed, so the diagnosis just taken is instead
-  // re-saved fresh under the new identity). See diagnosisTracking.js and
-  // the SQL migration's security note for why these need different handling.
+  // authMode 'signup' converted the current anonymous session (same
+  // auth.uid() throughout), so existing rows just need their `user_id`
+  // marker backfilled via markVisitorAsMember(). authMode 'signin' switched
+  // to a different, pre-existing account — nothing to do here for that case:
+  // signInExistingMember() in src/auth.jsx already minted and redeemed a
+  // handoff claim around the identity switch itself, so by the time this
+  // runs every completed diagnosis this browser owned is already reassigned.
   const handleAuthSuccess = async (authUser, authMode) => {
     setShowAuthPanel(false)
     if(!authUser) return // email-confirmation-pending signup: no session yet
     if(authMode==='signup'){
       await markVisitorAsMember()
-    }else{
-      await replayCurrentDiagnosisForNewIdentity({
-        testType: mode.toUpperCase(),
-        questions: activeQuestions,
-        answers,
-        analysis,
-        mode
-      })
     }
     setSavedToAccount(true)
   }

@@ -433,3 +433,188 @@ grant select on public.member_latest_completed_diagnosis to authenticated;
 -- diagnosis_funnel_stats' counts are computed only over rows they can see).
 -- An admin, whose "admin can view all ..." policies expose every row, sees
 -- the true site-wide totals.
+
+-- ----------------------------------------------------------------------------
+-- 5. Anonymous -> existing member handoff (claim-token RPC)
+-- ----------------------------------------------------------------------------
+-- Scope: this section only covers "익명 진단 → 기존 회원 로그인" — signing
+-- INTO a different, pre-existing account, where auth.uid() changes. It does
+-- NOT touch "회원가입" (converting the current anonymous session via
+-- supabase.auth.updateUser({email,password}) — see convertAnonymousToMember
+-- in src/auth.jsx): that path keeps the same auth.uid() throughout, so
+-- markVisitorAsMember() in src/diagnosisTracking.js (unchanged) already
+-- handles it with a plain, ordinary-RLS-scoped UPDATE.
+--
+-- Why a plain client-side UPDATE cannot do the login case: by the time the
+-- client is authenticated as the new (real) account, auth.uid() has already
+-- changed — every RLS policy above is keyed on
+-- `visitor_id/session.visitor_id = auth.uid()`, so a session still owned by
+-- the OLD anonymous identity is (correctly) invisible and unwritable to the
+-- new one. There is no safe ordinary-RLS way to reassign ownership across
+-- an identity boundary — if there were, it would just as easily let anyone
+-- authenticated grab anyone else's rows by ordinary UPDATE.
+--
+-- The fix is a narrow, two-step, SECURITY DEFINER-backed handoff:
+--   1) create_handoff_claim() — called by the CLIENT WHILE STILL the
+--      anonymous session (before signInWithPassword). Reads auth.uid()
+--      itself server-side (never trusts a client-supplied id — this is
+--      what satisfies "원래 소유자는 auth.uid()로 검증한다"), confirms
+--      that identity is genuinely anonymous and owns at least one
+--      completed diagnosis, and mints a random, single-use, 10-minute
+--      claim token scoped to that one identity. Returns only the token.
+--   2) claim_handoff(token) — called by the client AFTER
+--      signInWithPassword succeeds (now authenticated as the real,
+--      pre-existing member). Looks the token up, checks it's unexpired
+--      and unused, and — running as SECURITY DEFINER, deliberately
+--      bypassing the ordinary per-request RLS above — reassigns every
+--      COMPLETED diagnosis_sessions row (and its diagnosis_results row)
+--      owned by that token's anonymous identity to the caller's own
+--      auth.uid(). visitor_id is intentionally reassigned too (not just
+--      the nullable user_id marker), so the ordinary "owner can view own
+--      ..." policies immediately cover the transferred rows with no
+--      special-casing — answers transfer implicitly along with their
+--      parent session, since diagnosis_answers' own RLS is entirely
+--      keyed through session.visitor_id.
+--
+-- Why a session_id (or even a known visitor_id/uid) alone can never be
+-- enough to steal a handoff: the token is a SEPARATE, independently random
+-- UUID (public.session_handoff_claims.token), never derivable from a
+-- session_id or a visitor_id/uid, and is only ever returned to the one
+-- browser that was, at that moment, actually authenticated as the
+-- anonymous identity being handed off (step 1 cannot be called "on behalf
+-- of" someone else — there is no parameter for that). A stolen/leaked
+-- token IS a valid bearer credential while it lives (same trust model as
+-- any password-reset or email-confirmation link) — its 10-minute expiry
+-- and single-use claimed_at/claimed_by guard are what bound that exposure,
+-- not secrecy of the session/visitor id. See the RLS test suite for the
+-- explicit theft-attempt tests this reasoning is checked against.
+create table if not exists public.session_handoff_claims (
+  token uuid primary key default gen_random_uuid(),
+  anonymous_visitor_id uuid not null references auth.users(id),
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '10 minutes'),
+  claimed_at timestamptz,
+  claimed_by uuid references auth.users(id)
+);
+
+alter table public.session_handoff_claims enable row level security;
+-- No policies at all, on purpose: this table is only ever touched from
+-- inside the two SECURITY DEFINER functions below (same pattern as
+-- `admins`). No PostgREST client — anon or authenticated — gets any direct
+-- table access; there is nothing to select, insert, or update here except
+-- through create_handoff_claim()/claim_handoff().
+
+create or replace function public.create_handoff_claim()
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_is_anonymous boolean;
+  v_token uuid;
+begin
+  if v_uid is null then
+    raise exception 'not authenticated';
+  end if;
+
+  select is_anonymous into v_is_anonymous from auth.users where id = v_uid;
+  if v_is_anonymous is distinct from true then
+    raise exception 'only an anonymous session can create a handoff claim';
+  end if;
+
+  if not exists (
+    select 1 from public.diagnosis_sessions
+    where visitor_id = v_uid and status = 'completed'
+  ) then
+    raise exception 'no completed diagnosis to hand off';
+  end if;
+
+  -- Housekeeping only (not a security boundary): drop this identity's own
+  -- previously-unclaimed tokens before minting a new one, so a browser that
+  -- opens the sign-in panel more than once doesn't accumulate stale rows.
+  delete from public.session_handoff_claims
+  where anonymous_visitor_id = v_uid and claimed_at is null;
+
+  insert into public.session_handoff_claims (anonymous_visitor_id)
+  values (v_uid)
+  returning token into v_token;
+
+  return v_token;
+end;
+$$;
+
+revoke all on function public.create_handoff_claim() from public;
+grant execute on function public.create_handoff_claim() to authenticated;
+
+create or replace function public.claim_handoff(p_token uuid)
+returns table(sessions_transferred integer, results_transferred integer)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_new_uid uuid := auth.uid();
+  v_claim public.session_handoff_claims%rowtype;
+  v_moved_session_ids uuid[];
+  v_sessions integer := 0;
+  v_results integer := 0;
+begin
+  if v_new_uid is null then
+    raise exception 'not authenticated';
+  end if;
+
+  select * into v_claim
+  from public.session_handoff_claims
+  where token = p_token
+  for update; -- lock the row: two concurrent redemption attempts can't both succeed
+
+  if not found then
+    raise exception 'invalid handoff token';
+  end if;
+  if v_claim.claimed_at is not null then
+    raise exception 'handoff token already used';
+  end if;
+  if v_claim.expires_at < now() then
+    raise exception 'handoff token expired';
+  end if;
+  if v_claim.anonymous_visitor_id = v_new_uid then
+    raise exception 'cannot hand off to the same identity';
+  end if;
+
+  update public.session_handoff_claims
+  set claimed_at = now(), claimed_by = v_new_uid
+  where token = p_token;
+
+  -- visitor_id is reassigned too (see the section comment above for why) —
+  -- only completed sessions still owned by the claim's anonymous identity
+  -- move; anything already claimed by someone else, or not yet completed,
+  -- is left untouched. The moved session_ids are captured into
+  -- v_moved_session_ids so the results update below touches exactly those
+  -- rows — not the caller's own pre-existing sessions, which would also
+  -- match a plain `visitor_id = v_new_uid` filter after the fact and
+  -- inflate results_transferred.
+  with moved as (
+    update public.diagnosis_sessions
+    set visitor_id = v_new_uid, user_id = v_new_uid
+    where visitor_id = v_claim.anonymous_visitor_id
+      and status = 'completed'
+    returning session_id
+  )
+  select array_agg(session_id), count(*) into v_moved_session_ids, v_sessions from moved;
+
+  with moved_results as (
+    update public.diagnosis_results
+    set user_id = v_new_uid
+    where session_id = any(v_moved_session_ids)
+    returning session_id
+  )
+  select count(*) into v_results from moved_results;
+
+  return query select v_sessions, v_results;
+end;
+$$;
+
+revoke all on function public.claim_handoff(uuid) from public;
+grant execute on function public.claim_handoff(uuid) to authenticated;

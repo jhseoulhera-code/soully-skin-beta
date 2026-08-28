@@ -103,15 +103,55 @@ export async function convertAnonymousToMember(email, password) {
   return supabase.auth.updateUser({ email, password })
 }
 
+// Mints a single-use, 10-minute handoff claim token for THIS browser's
+// current anonymous session (must be called before signInExistingMember
+// switches identity — see claim_handoff()'s SQL comment for why the order
+// matters). Returns null if there's nothing to hand off (not anonymous, or
+// no completed diagnosis yet) — that's an expected, non-fatal case, not an
+// error to surface to the user.
+async function createHandoffClaim() {
+  if (!supabase) return null
+  const { data, error } = await supabase.rpc('create_handoff_claim')
+  if (error) {
+    console.warn('createHandoffClaim (expected if nothing to hand off):', error.message)
+    return null
+  }
+  return data ?? null
+}
+
+// Redeems a handoff claim token while authenticated as the NEW identity.
+// Only ever reassigns rows the token's original anonymous identity actually
+// owned — see claim_handoff()'s SQL comment for the full security argument.
+async function claimHandoff(token) {
+  if (!supabase || !token) return null
+  const { data, error } = await supabase.rpc('claim_handoff', { p_token: token })
+  if (error) {
+    console.error('claimHandoff', error)
+    return null
+  }
+  return data ?? null
+}
+
 // "로그인": switches to a different, pre-existing account. This REPLACES
 // the anonymous session — auth.uid() changes — so any anonymous work done
-// on this browser under the old identity is intentionally not reachable
-// from the new one afterwards (RLS enforces this; see the SQL migration's
-// security note). App.jsx separately re-saves just the diagnosis in
-// progress under the new identity in this case.
+// on this browser under the old identity would (correctly) become
+// unreachable from the new one afterwards under plain RLS. To still honor
+// "로그인해도 방금 완료한 익명 진단은 내 계정으로 이전된다", this mints a
+// handoff claim BEFORE switching (while still authenticated as the
+// anonymous session, so the claim can only ever be scoped to that real
+// identity — see create_handoff_claim()'s SQL comment), then redeems it
+// once signed in as the new identity. If there's nothing to hand off, or
+// the handoff RPCs aren't deployed yet, sign-in still proceeds normally —
+// the handoff is a bonus on top of a normal login, never a precondition
+// for it.
 export async function signInExistingMember(email, password) {
   if (!supabase) return { data: null, error: new Error('Supabase가 연결되어 있지 않습니다.') }
-  return supabase.auth.signInWithPassword({ email, password })
+  const claimToken = await createHandoffClaim()
+  const result = await supabase.auth.signInWithPassword({ email, password })
+  if (!result.error && claimToken) {
+    await claimHandoff(claimToken)
+  }
+  return result
 }
 
 export async function signOut() {
