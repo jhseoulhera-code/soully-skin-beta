@@ -47,6 +47,17 @@ const METHOD_OPTIONS = [
   { key: 'subscription', label: '세트/구독 추천' }
 ]
 
+// DEEP 56-question flow: 14 four-question pages, with a short intermission
+// card after pages 4/8/12 of 14 (3 total) instead of the old per-chapter
+// transition screen. `afterPage` is the 0-indexed page just completed. No
+// accuracy/percentage claims in the copy — only progress-feel language.
+const DEEP_INTERMISSIONS = [
+  { afterPage: 3, title: '피부의 기본 성향이 조금씩 보이기 시작했어요.', sub: '지금까지의 답변을 바탕으로 고객님의 주요 피부 패턴을 확인하고 있어요.' },
+  { afterPage: 7, title: '절반 이상 진행했어요.', sub: '피부 성향과 현재 피부 컨디션을 나누어 조금 더 세밀하게 살펴보고 있어요.' },
+  { afterPage: 11, title: '마지막 정밀 확인 단계예요.', sub: '몇 가지 질문만 더 확인하면 고객님의 피부 특징을 한눈에 정리할 수 있어요.' }
+]
+const RESULT_CALC_MESSAGE = { title: '분석이 거의 완성됐어요.', sub: '지금까지의 답변을 바탕으로 피부 타입과 현재 컨디션을 정리하고 있습니다.' }
+
 function HexRadar({ data }) {
   const cx = 110, cy = 140, R = 82
   const LABEL_R = R + 26
@@ -88,6 +99,10 @@ export default function App(){
   const [mode,setMode]=useState(null) // 'quick' (16, 4-axis) | 'deep' (64, 6-axis)
   const [chapterIndex,setChapterIndex]=useState(0)
   const [batchIndex,setBatchIndex]=useState(0)
+  // DEEP-only pagination state (56 questions / 14 pages of 4). QUICK still
+  // uses chapterIndex/batchIndex above, untouched.
+  const [pageIndex,setPageIndex]=useState(0)
+  const [intermission,setIntermission]=useState(null) // null | one of DEEP_INTERMISSIONS | RESULT_CALC_MESSAGE
   const [answers,setAnswers]=useState({})
   const [showInsight,setShowInsight]=useState(false)
   const [contactMethod,setContactMethod]=useState('kakao')
@@ -112,7 +127,7 @@ export default function App(){
   // happened to be scrolled to.
   useEffect(()=>{
     window.scrollTo(0,0)
-  },[screen,chapterIndex,batchIndex,showInsight])
+  },[screen,chapterIndex,batchIndex,showInsight,pageIndex,intermission])
 
   // The question bank is filtered once per mode: QUICK 16 only ever sees its
   // 18 four-axis questions; DEEP 64 sees the same 18 plus the 20 more
@@ -138,6 +153,23 @@ export default function App(){
   const batches=chunk(chapterQs,1)
   const currentBatch=batches[batchIndex] || []
 
+  // DEEP-only: the same activeQuestions list (56 questions, fixed array
+  // order — TYPE axis blocks, then STATE, then the validation question
+  // last) sliced into pages of 4 regardless of chapter boundaries.
+  const deepPages = useMemo(
+    () => mode==='deep' ? chunk(activeQuestions,4) : [],
+    [mode, activeQuestions]
+  )
+  const deepCurrentQs = deepPages[pageIndex] || []
+  // A multiSelect question (currently only the validation question) stores
+  // an array of chosen option indices in `answers[q.text]` instead of a
+  // single index — "answered" means at least one pick, not just "not
+  // undefined" (an empty array is still an array).
+  const isDeepAnswered = q => q.multiSelect
+    ? Array.isArray(answers[q.text]) && answers[q.text].length>0
+    : answers[q.text]!==undefined
+  const deepAllAnswered = deepCurrentQs.length>0 && deepCurrentQs.every(isDeepAnswered)
+
   const answeredCount = Object.keys(answers).length
   const totalQuestions = activeQuestions.length
   const overallPercent = totalQuestions ? Math.min(100, Math.round((answeredCount / totalQuestions) * 100)) : 0
@@ -148,6 +180,10 @@ export default function App(){
     const weather={}
     const tags={}
     activeQuestions.forEach(q=>{
+      // validationOnly questions (e.g. the self-perceived-type reference
+      // question) never feed TYPE or STATE — checked first so nothing
+      // downstream can accidentally pull one into a sum/weight/weather.
+      if(q.validationOnly) return
       const picked=answers[q.text]
       if(picked===undefined) return
       const opt=q.options[picked]
@@ -217,6 +253,66 @@ export default function App(){
       setChapterIndex(pi); setBatchIndex(Math.max(0,chunk(prevQs,1).length-1))
     }
   }
+
+  // DEEP paginated flow: picking an answer only records it — no auto-advance,
+  // the user must hit "다음" once all 4 questions on the page are answered.
+  const chooseDeep=(q,i)=>{
+    if(!q.multiSelect){ setAnswers(v=>({...v,[q.text]:i})); return }
+    setAnswers(v=>{
+      const current = Array.isArray(v[q.text]) ? v[q.text] : []
+      const opt = q.options[i]
+      let next
+      if(opt.exclusive){
+        // Tapping an exclusive option ("특별히 없음"/"잘 모르겠어요") always
+        // replaces the whole selection with just itself — tapping it again
+        // clears the question back to unanswered.
+        next = (current.length===1 && current[0]===i) ? [] : [i]
+      }else{
+        // Picking any regular option first drops whichever exclusive
+        // option was selected (the two states can never coexist), then
+        // toggles the tapped option in/out of the selection as usual.
+        const withoutExclusive = current.filter(idx=>!q.options[idx].exclusive)
+        next = withoutExclusive.includes(i)
+          ? withoutExclusive.filter(idx=>idx!==i)
+          : [...withoutExclusive, i]
+      }
+      return {...v, [q.text]: next}
+    })
+  }
+
+  const nextDeepPage=()=>{
+    if(!deepAllAnswered) return
+    if(pageIndex===deepPages.length-1){
+      setIntermission(RESULT_CALC_MESSAGE)
+      return
+    }
+    const msg=DEEP_INTERMISSIONS.find(m=>m.afterPage===pageIndex)
+    if(msg) setIntermission(msg)
+    else setPageIndex(i=>i+1)
+  }
+
+  const prevDeepPage=()=>{
+    if(pageIndex>0) setPageIndex(i=>i-1)
+  }
+
+  // Tapping the intermission card skips straight to the next step; the
+  // effect below fires the same transition automatically after a short
+  // delay so nobody gets stuck needing to tap through it.
+  const skipIntermission=()=>{
+    if(intermission===RESULT_CALC_MESSAGE) setScreen('result')
+    else setPageIndex(i=>i+1)
+    setIntermission(null)
+  }
+
+  useEffect(()=>{
+    if(!intermission) return
+    const t=setTimeout(()=>{
+      if(intermission===RESULT_CALC_MESSAGE) setScreen('result')
+      else setPageIndex(i=>i+1)
+      setIntermission(null)
+    },1700)
+    return ()=>clearTimeout(t)
+  },[intermission])
 
   const submitLead = async () => {
     // Guards against a double click (or any duplicate call in the same
@@ -307,7 +403,7 @@ export default function App(){
           <i>{i===0?'START':'•'}</i>
         </div>)}
       </div>
-      <button className="cta purple" onClick={()=>{setChapterIndex(0);setBatchIndex(0);setShowInsight(false);setScreen('test')}}>처음부터 시작하기</button>
+      <button className="cta purple" onClick={()=>{setChapterIndex(0);setBatchIndex(0);setShowInsight(false);setPageIndex(0);setIntermission(null);setScreen('test')}}>처음부터 시작하기</button>
     </section>
   </main>
 
@@ -374,7 +470,7 @@ export default function App(){
           <h3>64가지 세부 피부 MBTI가 궁금하다면?</h3>
           <p>지금 결과는 4축 기반 QUICK 16이에요. 모공(CB)·열반응(HQ)까지 더한 DEEP 64 정밀진단을 받아보면 64타입 세부 결과를 확인할 수 있어요.</p>
           <button className="cta purple" onClick={()=>{
-            setAnswers({});setChapterIndex(0);setBatchIndex(0);setMode('deep');setScreen('journey')
+            setAnswers({});setChapterIndex(0);setBatchIndex(0);setPageIndex(0);setIntermission(null);setMode('deep');setScreen('journey')
           }}>DEEP 64 정밀진단 받아보기</button>
         </div>}
 
@@ -428,10 +524,73 @@ export default function App(){
         </div>}
 
         <button className="cta purple" onClick={()=>{
-          setAnswers({});setChapterIndex(0);setBatchIndex(0);setScreen('landing');setMode(null)
+          setAnswers({});setChapterIndex(0);setBatchIndex(0);setPageIndex(0);setIntermission(null);setScreen('landing');setMode(null)
           setContactValue('');setConsent(false);setLeadStatus('')
           setShow64Gate(false);setShowDetailed64Type(false);setSubmitting(false);submittingRef.current=false
         }}>처음부터 다시 하기</button>
+      </section>
+    </main>
+  }
+
+  // DEEP mode's own 56-question / 14-page flow. QUICK mode never reaches
+  // here (mode==='quick' falls through to the original chapter-based
+  // screen below, completely untouched).
+  if(mode==='deep' && screen==='test'){
+    if(intermission){
+      return <main className="screen themed" style={theme} onClick={skipIntermission}>
+        <section className="phone-card insight-screen intermission-screen">
+          <div className="brand">SOULLY</div>
+          <div className="big-hex intermission-spark">✦</div>
+          <h2>{intermission.title}</h2>
+          <p>{intermission.sub}</p>
+        </section>
+      </main>
+    }
+
+    const totalPages = deepPages.length
+    const pagePercent = totalPages ? Math.round(((pageIndex+1)/totalPages)*100) : 0
+
+    return <main className="screen themed" style={theme}>
+      <section className="phone-card test-card">
+        <header className="test-head">
+          <div><div className="brand">SOULLY</div><h2>피부 정밀 진단</h2></div>
+          <span>{pageIndex+1} / {totalPages}</span>
+        </header>
+
+        <div className="overall-progress">
+          <div className="overall-progress-top">
+            <span>진행 페이지</span>
+            <strong>{pageIndex+1} / {totalPages} · {pagePercent}%</strong>
+          </div>
+          <div className="overall-track"><i style={{width:`${pagePercent}%`}} /></div>
+          <div className="overall-progress-sub">{answeredCount} / {totalQuestions} 문항 완료</div>
+        </div>
+
+        <div className="question-panel deep-question-list">
+          {deepCurrentQs.map((q,qi)=><React.Fragment key={q.text}>
+            {qi>0 && <div className="deep-divider" />}
+            <article className="question deep-question">
+              <h3>{q.text}</h3>
+              <div className="answers">
+                {q.options.map((o,i)=>{
+                  const isSelected = q.multiSelect
+                    ? Array.isArray(answers[q.text]) && answers[q.text].includes(i)
+                    : answers[q.text]===i
+                  return <button key={o.label} className={`answer ${isSelected?'selected':''}`} onClick={()=>chooseDeep(q,i)}>
+                    <span className="mini-check">{isSelected?'✓':''}</span><span>{o.label}</span>
+                  </button>
+                })}
+              </div>
+            </article>
+          </React.Fragment>)}
+        </div>
+
+        <footer className="nav">
+          <button className="back" onClick={prevDeepPage} disabled={pageIndex===0}>← 이전</button>
+          <button className="next themed-btn" onClick={nextDeepPage} disabled={!deepAllAnswered}>
+            {pageIndex===totalPages-1?'결과 계산하기':'다음'}
+          </button>
+        </footer>
       </section>
     </main>
   }
