@@ -442,7 +442,7 @@ export const questions = [
   },
   {
     chapter: 'tired', axis: 'WT', state: false, tag: 'volume_loss', modes: D,
-    text: '볼이나 관자놀이 등 얼굴에 볼륨이 예전보다 줄어든 느낌이 드나요?',
+    text: '체중 변화와 관계없이, 얼굴(볼·관자놀이)의 볼륨이 자연스럽게 꺼지거나 처지는 느낌이 드나요?',
     options: [
       { label: '전혀 아니다', score: -3 },
       { label: '약간', score: -1 },
@@ -526,7 +526,7 @@ export const questions = [
   },
   {
     chapter: 'pores', axis: 'CB', state: false, tag: 'breakout_duration', modes: D,
-    text: '트러블이 한 번 생기면 가라앉기까지 보통 얼마나 걸리나요?',
+    text: '트러블이 생기면 붓기와 통증이 가라앉기까지 보통 얼마나 걸리나요? (색이 남는 흔적은 제외하고 답해주세요)',
     options: [
       { label: '2~3일 이내', score: -3 },
       { label: '일주일 정도', score: -1 },
@@ -601,7 +601,7 @@ export const questions = [
   // which are all about heat exposure specifically --
   {
     chapter: 'heat', axis: 'HQ', state: false, tag: 'cold_transition_reaction', modes: D,
-    text: '실내외 온도차가 큰 곳을 오가면(예: 냉난방 공간 ↔ 바깥) 얼굴이 붉어지거나 화끈거리나요?',
+    text: "실내외를 오갈 때 온도가 갑자기 바뀌면 얼굴이 붉어지거나 화끈거리는 '일시적 홍조'가 나타나나요? (건조함·따가움이 아니라 붉어짐·열감 자체를 기준으로 답해주세요)",
     options: [
       { label: '거의 없다', score: -3 },
       { label: '가끔', score: -1 },
