@@ -60,7 +60,15 @@ export async function ensureVisitorRecord() {
 // Starts a brand new diagnosis attempt. Called every time a diagnosis is
 // (re)started — QUICK -> DEEP retake included — so each attempt gets its
 // own session_id and no prior answers/results are overwritten.
-export async function createDiagnosisSession(testType) {
+//
+// `versionOverrides` is optional and additive: every existing call site
+// (v4.0's quiz) calls this with just `testType`, so `algorithmVersion`/
+// `questionSetVersion` fall back to the same ALGORITHM_VERSION/
+// QUESTION_SET_VERSION constants as before — v4.0 behavior is unchanged
+// byte-for-byte. Skin Diagnosis V1.0 passes
+// { algorithmVersion: ALGORITHM_VERSION_V1, questionSetVersion: QUESTION_VERSION_V1 }
+// so its sessions are tagged 'skin_v1.0' instead.
+export async function createDiagnosisSession(testType, versionOverrides = {}) {
   const sessionId = crypto.randomUUID()
   const uid = await ensureVisitorRecord()
   if (!supabase || !uid) return { sessionId }
@@ -78,8 +86,8 @@ export async function createDiagnosisSession(testType) {
     utm_medium: utm.utm_medium,
     utm_campaign: utm.utm_campaign,
     utm_content: utm.utm_content,
-    algorithm_version: ALGORITHM_VERSION,
-    question_set_version: QUESTION_SET_VERSION
+    algorithm_version: versionOverrides.algorithmVersion || ALGORITHM_VERSION,
+    question_set_version: versionOverrides.questionSetVersion || QUESTION_SET_VERSION
   })
   if (error) console.error('createDiagnosisSession', error)
   return { sessionId }
@@ -158,6 +166,60 @@ export async function saveDiagnosisResult(sessionId, analysis, mode) {
     result_version: RESULT_VERSION
   }, { onConflict: 'session_id' })
   if (error) console.error('saveDiagnosisResult', error)
+}
+
+// Skin Diagnosis V1.0 counterpart to saveDiagnosisResult above — kept as a
+// separate function so v4.0's mapping (oil/sensitivity/pigmentation/aging +
+// pore=CB/heat=HQ) is never touched. `analysisV1` is scoringV1.js's
+// computeAnalysisV1() return shape ({p, state, type16, type64,
+// primaryType}), not v4.0's `analysis` shape.
+//
+// Column reuse follows the schema's own stated intent (see
+// supabase-migration-diagnosis-tracking.sql's diagnosis_results comment:
+// "hydration/barrier/acne/tone ... left null until a new scoring algorithm
+// is wired up to fill them" — this is that algorithm):
+//   oil/sensitivity/pigmentation/aging_score <- OD/SR/PN/WT (shared concept
+//     with v4.0; which algorithm produced a given row is disambiguated via
+//     the joined session's algorithm_version/question_set_version)
+//   barrier_score <- BG, acne_score <- AC (V1.0-only axes; null on v4.0 rows)
+//   hydration/tone_score <- STATE hydration/tone (direct name match; v4.0
+//     never writes either, so there's no cross-version ambiguity)
+// pore_score/heat_score are intentionally NOT reused here — v4.0 already
+// writes CB into pore_score and HQ into heat_score (see saveDiagnosisResult
+// above), and requirement #12 says skin_v1.0 must not use CB/HQ at all, so
+// STATE's "pore" gets its own new pore_visibility_score column instead of
+// colliding with v4.0's CB-derived pore_score. texture/heat_redness/
+// current_sensitivity/current_acne_score are likewise new additive columns
+// (see supabase-migration-skin-v1-questions.sql) since no existing column
+// matches those STATE concepts.
+export async function saveDiagnosisResultV1(sessionId, analysisV1, mode) {
+  if (!supabase || !sessionId) return
+  const { uid, isMember } = await ensureIdentity()
+  const p = analysisV1.p
+  const s = analysisV1.state
+  const isDeep = mode === 'deep'
+  const { error } = await supabase.from('diagnosis_results').upsert({
+    session_id: sessionId,
+    user_id: isMember ? uid : null,
+    oil_score: p.OD,
+    sensitivity_score: p.SR,
+    pigmentation_score: p.PN,
+    aging_score: p.WT,
+    barrier_score: isDeep ? p.BG : null,
+    acne_score: isDeep ? p.AC : null,
+    hydration_score: isDeep ? s.hydration : null,
+    pore_visibility_score: isDeep ? s.pore : null,
+    texture_score: isDeep ? s.texture : null,
+    tone_score: isDeep ? s.tone : null,
+    heat_redness_score: isDeep ? s.heat_redness : null,
+    current_sensitivity_score: isDeep ? s.current_sensitivity : null,
+    current_acne_score: isDeep ? s.current_acne : null,
+    skin_type: analysisV1.primaryType,
+    skin_type_16: analysisV1.type16,
+    skin_type_64: analysisV1.type64,
+    result_version: 'skin_v1.0'
+  }, { onConflict: 'session_id' })
+  if (error) console.error('saveDiagnosisResultV1', error)
 }
 
 // Called right after "회원가입" (convertAnonymousToMember) succeeds. Fills

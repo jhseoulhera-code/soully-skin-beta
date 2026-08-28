@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { chapters, questions } from './questions'
 import { computeAnalysis } from './scoring'
+import { questionsV1, chaptersV1, ALGORITHM_VERSION_V1, QUESTION_VERSION_V1 } from './questionsV1'
+import { computeAnalysisV1 } from './scoringV1'
+import { applyMultiSelect } from './multiSelect'
 import { saveLead } from './supabase'
 import { AuthProvider, useAuth } from './auth'
 import AuthPanel from './AuthPanel'
@@ -11,6 +14,7 @@ import {
   recordAnswer,
   completeSession,
   saveDiagnosisResult,
+  saveDiagnosisResultV1,
   markVisitorAsMember
 } from './diagnosisTracking'
 
@@ -23,6 +27,19 @@ const AXIS = {
   HQ:['열반응','안정']
 }
 
+// Skin Diagnosis V1.0's own axis label maps — separate from AXIS/AXIS_META
+// above (v4.0's) so v4.0's CB/HQ labels are never touched. BG/AC are new
+// axes v4.0 never had; OD/SR/PN/WT reuse the same Korean labels since it's
+// the same underlying concept, just a different (versioned) question bank.
+const AXIS_V1 = {
+  OD:['유분','건조'],
+  SR:['민감','저민감'],
+  PN:['색소흔적','비색소'],
+  WT:['노화징후','탄력안정'],
+  BG:['장벽안정','회복지연'],
+  AC:['트러블반복','안정']
+}
+
 const chunk = (arr, size=2) => arr.reduce((acc,_,i)=>(i%size?acc: [...acc, arr.slice(i,i+size)]),[])
 
 const AXIS_META = {
@@ -32,6 +49,25 @@ const AXIS_META = {
   WT: ['노화', '#C4D3EA'],
   CB: ['모공', '#F2C1B5'],
   HQ: ['열반응', '#F2CE9E']
+}
+
+const AXIS_META_V1 = {
+  OD: ['유분', '#B9A7F3'],
+  SR: ['민감', '#F1DFA7'],
+  PN: ['색소', '#E8C1D1'],
+  WT: ['노화', '#C4D3EA'],
+  BG: ['장벽', '#F2DDA6'],
+  AC: ['트러블', '#F2B8C4']
+}
+
+const STATE_META_V1 = {
+  hydration: '수분부족',
+  pore: '모공',
+  texture: '피부결',
+  tone: '피부톤',
+  heat_redness: '열감·홍조',
+  current_sensitivity: '현재민감',
+  current_acne: '현재트러블'
 }
 
 const INTENT_OPTIONS = [
@@ -98,6 +134,11 @@ function DiagnosisApp(){
   const { user, isMember } = useAuth()
   const [screen,setScreen]=useState('landing')
   const [mode,setMode]=useState(null) // 'quick' (16, 4-axis) | 'deep' (64, 6-axis)
+  // 'v4' (existing 44-question bank) | 'v1' (Skin Diagnosis V1.0, 48
+  // questions). Always set together with `mode` from the landing screen's
+  // mode-card onClick, so every path into the quiz picks both explicitly —
+  // nothing downstream needs to reset this on its own.
+  const [testFamily,setTestFamily]=useState('v4')
   const [chapterIndex,setChapterIndex]=useState(0)
   const [batchIndex,setBatchIndex]=useState(0)
   const [answers,setAnswers]=useState({})
@@ -145,7 +186,8 @@ function DiagnosisApp(){
     resultSavedForRef.current=sessionId
     ;(async()=>{
       await completeSession(sessionId)
-      await saveDiagnosisResult(sessionId, analysis, mode)
+      if(testFamily==='v1') await saveDiagnosisResultV1(sessionId, analysis, mode)
+      else await saveDiagnosisResult(sessionId, analysis, mode)
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[screen,sessionId])
@@ -161,7 +203,10 @@ function DiagnosisApp(){
     startingSessionRef.current=true
     setStartingDiagnosis(true)
     try{
-      const { sessionId: newSessionId } = await createDiagnosisSession(mode.toUpperCase())
+      const versionOverrides = testFamily==='v1'
+        ? { algorithmVersion: ALGORITHM_VERSION_V1, questionSetVersion: QUESTION_VERSION_V1 }
+        : undefined
+      const { sessionId: newSessionId } = await createDiagnosisSession(mode.toUpperCase(), versionOverrides)
       setChapterIndex(0);setBatchIndex(0);setShowInsight(false)
       resultSavedForRef.current=null
       setSavedToAccount(false)
@@ -191,12 +236,19 @@ function DiagnosisApp(){
   // 내 피부 chapters under QUICK) simply don't appear — nothing else needs
   // to special-case chapter visibility.
   const activeQuestions = useMemo(
-    () => mode ? questions.filter(q=>q.modes.includes(mode)) : [],
-    [mode]
+    () => {
+      if(!mode) return []
+      const bank = testFamily==='v1' ? questionsV1 : questions
+      return bank.filter(q=>q.modes.includes(mode))
+    },
+    [mode, testFamily]
   )
   const activeChapters = useMemo(
-    () => chapters.filter(c=>activeQuestions.some(q=>q.chapter===c.id)),
-    [activeQuestions]
+    () => {
+      const bank = testFamily==='v1' ? chaptersV1 : chapters
+      return bank.filter(c=>activeQuestions.some(q=>q.chapter===c.id))
+    },
+    [activeQuestions, testFamily]
   )
 
   const chapter=activeChapters[chapterIndex]
@@ -215,7 +267,10 @@ function DiagnosisApp(){
   // unit-tested against the pre-extraction implementation for the full
   // 44-question set) — this just wires it to the current answers/questions.
   // answers is keyed by question id, not question text (see src/questions.js).
-  const analysis = useMemo(() => computeAnalysis(activeQuestions, answers), [answers, activeQuestions])
+  const analysis = useMemo(
+    () => testFamily==='v1' ? computeAnalysisV1(activeQuestions, answers) : computeAnalysis(activeQuestions, answers),
+    [answers, activeQuestions, testFamily]
+  )
 
   // Holds the pending "advance to next question" timer. Re-selecting an
   // answer (or picking a different one) before it fires cancels and
@@ -257,14 +312,12 @@ function DiagnosisApp(){
   // multi_select questions from axis scoring for now; no scoring formula
   // exists for them yet.
   const chooseMulti=(q,i)=>{
-    setAnswers(v=>{
-      const current = Array.isArray(v[q.id]) ? v[q.id] : []
-      const next = current.includes(i) ? current.filter(x=>x!==i) : [...current,i]
-      return {...v,[q.id]:next}
-    })
+    // applyMultiSelect enforces q.multiSelectMax (e.g. Skin Diagnosis
+    // V1.0's q48: max 2) while leaving uncapped multi_select questions
+    // (none currently exist in v4.0) behaving exactly as before.
+    const next = applyMultiSelect(answers[q.id], i, q.multiSelectMax)
+    setAnswers(v=>({...v,[q.id]:next}))
     if(sessionId){
-      const picked = Array.isArray(answers[q.id]) ? answers[q.id] : []
-      const next = picked.includes(i) ? picked.filter(x=>x!==i) : [...picked,i]
       const responseTimeMs=Date.now()-questionShownAtRef.current
       recordAnswer(sessionId,{
         questionId: q.id,
@@ -383,13 +436,25 @@ function DiagnosisApp(){
       {isMember && <button className="text-btn" onClick={()=>setScreen('history')}>MY SKIN HISTORY 보기</button>}
 
       <div className="mode-picker">
-        <button className="mode-card mode-card--quick" onClick={()=>{setMode('quick');setScreen('journey')}}>
+        <button className="mode-card mode-card--quick" onClick={()=>{setTestFamily('v4');setMode('quick');setScreen('journey')}}>
           <span className="mode-card-title">QUICK 16</span>
           <span className="mode-card-desc">18문항 · 1~2분 · 4축 기본 진단</span>
         </button>
-        <button className="mode-card mode-card--deep" onClick={()=>{setMode('deep');setScreen('journey')}}>
+        <button className="mode-card mode-card--deep" onClick={()=>{setTestFamily('v4');setMode('deep');setScreen('journey')}}>
           <span className="mode-card-title">DEEP 64</span>
           <span className="mode-card-desc">38문항 내외 · 4~5분 · 6축 정밀 진단</span>
+        </button>
+      </div>
+
+      <div className="kicker" style={{marginTop:22}}>SKIN DIAGNOSIS V1.0</div>
+      <div className="mode-picker">
+        <button className="mode-card mode-card--quick" onClick={()=>{setTestFamily('v1');setMode('quick');setScreen('journey')}}>
+          <span className="mode-card-title">V1.0 QUICK 16</span>
+          <span className="mode-card-desc">16문항 · 1~2분 · 4축 기본 진단</span>
+        </button>
+        <button className="mode-card mode-card--deep" onClick={()=>{setTestFamily('v1');setMode('deep');setScreen('journey')}}>
+          <span className="mode-card-title">V1.0 DEEP 48</span>
+          <span className="mode-card-desc">48문항 · 4~5분 · 6축 정밀 진단 + 현재 컨디션</span>
         </button>
       </div>
       <small>회원가입 없이 바로 시작할 수 있어요.</small>
@@ -419,12 +484,17 @@ function DiagnosisApp(){
   </main>
 
   if(screen==='result'){
-    const activeAxisKeys = mode==='deep' ? ['OD','SR','PN','WT','CB','HQ'] : ['OD','SR','PN','WT']
-    const vals = activeAxisKeys.map(k=>[AXIS_META[k][0], analysis.p[k], AXIS_META[k][1]])
+    const isV1 = testFamily==='v1'
+    const axisLabels = isV1 ? AXIS_V1 : AXIS
+    const axisMeta = isV1 ? AXIS_META_V1 : AXIS_META
+    const activeAxisKeys = isV1
+      ? (mode==='deep' ? ['OD','SR','PN','WT','BG','AC'] : ['OD','SR','PN','WT'])
+      : (mode==='deep' ? ['OD','SR','PN','WT','CB','HQ'] : ['OD','SR','PN','WT'])
+    const vals = activeAxisKeys.map(k=>[axisMeta[k][0], analysis.p[k], axisMeta[k][1]])
     return <main className="screen result-screen">
       <section className="phone-card result-card">
         <div className="brand">SOULLY SKIN TYPE</div>
-        <div className="mode-badge">{mode==='deep'?'DEEP 64':'QUICK 16'}</div>
+        <div className="mode-badge">{isV1 ? (mode==='deep'?'SKIN V1.0 · DEEP 48':'SKIN V1.0 · QUICK 16') : (mode==='deep'?'DEEP 64':'QUICK 16')}</div>
         <p className="muted">당신의 Skin Type</p>
         <h1 className="type">{analysis.primaryType}</h1>
         {analysis.type64 && <p className="type-sub">Skin16 기준 · {analysis.type16}</p>}
@@ -440,12 +510,23 @@ function DiagnosisApp(){
 
         <div className="score-box">
           {activeAxisKeys.map(k=><div className="score-line" key={k}>
-            <div><b>{AXIS[k][0]} {analysis.p[k]}</b><span>{AXIS[k][1]} {100-analysis.p[k]}</span></div>
+            <div><b>{axisLabels[k][0]} {analysis.p[k]}</b><span>{axisLabels[k][1]} {100-analysis.p[k]}</span></div>
             <div className="track"><i style={{width:`${analysis.p[k]}%`}}/></div>
           </div>)}
         </div>
 
-        {analysis.tags.fragrance >= 2 && <div className="insight-card">
+        {isV1 && mode==='deep' && analysis.state && <div className="lead-card">
+          <div className="lead-kicker">오늘의 피부 컨디션 (STATE)</div>
+          <h3>타입과 별개로, 최근 컨디션이에요</h3>
+          <p>아래 점수는 피부 타입 판정(type16/type64)에는 반영되지 않아요.</p>
+          <div className="history-list-scores">
+            {Object.keys(STATE_META_V1).map(k=>
+              <span key={k}>{STATE_META_V1[k]} {analysis.state[k] ?? '-'}</span>
+            )}
+          </div>
+        </div>}
+
+        {!isV1 && analysis.tags?.fragrance >= 2 && <div className="insight-card">
           <b>향 민감 반응이 보여요</b>
           <p>향이 강한 제품이나 향료·에센셜오일이 포함된 제품은 제품 선택 시 우선 확인하는 것이 좋아요.</p>
         </div>}
@@ -476,7 +557,7 @@ function DiagnosisApp(){
           </>}
         </div>
 
-        {mode==='quick' && <div className="lead-card unlock-teaser">
+        {!isV1 && mode==='quick' && <div className="lead-card unlock-teaser">
           <div className="lead-kicker">SOULLY SKIN 64</div>
           <h3>64가지 세부 피부 MBTI가 궁금하다면?</h3>
           <p>지금 결과는 4축 기반 QUICK 16이에요. 모공(CB)·열반응(HQ)까지 더한 DEEP 64 정밀진단을 받아보면 64타입 세부 결과를 확인할 수 있어요.</p>
@@ -485,14 +566,14 @@ function DiagnosisApp(){
           }}>DEEP 64 정밀진단 받아보기</button>
         </div>}
 
-        {mode==='deep' && !showDetailed64Type && !show64Gate && <div className="lead-card unlock-teaser">
+        {!isV1 && mode==='deep' && !showDetailed64Type && !show64Gate && <div className="lead-card unlock-teaser">
           <div className="lead-kicker">SOULLY SKIN 64</div>
           <h3>내 피부 MBTI를 더 자세히 알고 싶나요?</h3>
           <p>카카오톡 또는 이메일을 남기면 64가지 세부 피부 MBTI 결과를 확인할 수 있어요.</p>
           <button className="cta purple" onClick={()=>setShow64Gate(true)}>64타입 상세 결과 보기</button>
         </div>}
 
-        {mode==='deep' && !showDetailed64Type && show64Gate && <div className="lead-card">
+        {!isV1 && mode==='deep' && !showDetailed64Type && show64Gate && <div className="lead-card">
           <div className="lead-kicker">SOULLY SKIN 64</div>
           <h3>64타입 피부 MBTI 결과를 받아보세요</h3>
           <p>카카오톡 또는 이메일을 남기고 개인정보 수집에 동의하면 상세 결과를 바로 확인할 수 있어요.</p>
@@ -527,7 +608,7 @@ function DiagnosisApp(){
           {leadStatus && <div className="lead-status">{leadStatus}</div>}
         </div>}
 
-        {mode==='deep' && showDetailed64Type && <div className="lead-card detail64-card">
+        {!isV1 && mode==='deep' && showDetailed64Type && <div className="lead-card detail64-card">
           <div className="lead-kicker">SOULLY SKIN 64</div>
           <h3>64타입 피부 MBTI 상세 결과</h3>
           <p>등록이 완료됐어요! 64타입 세부 분석 알고리즘과 콘텐츠는 곧 이 화면에 채워질 예정이에요.</p>
@@ -608,6 +689,12 @@ function DiagnosisApp(){
                   <span className="mini-check">{picked?'✓':''}</span><span>{o.label}</span>
                 </button>
               })}
+            </div>
+          ) : q.scale_type==='numeric_0_10' ? (
+            <div className="numeric-scale">
+              {q.options.map((o,i)=><button key={o.label} className={`numeric-cell ${answers[q.id]===i?'selected':''}`} onClick={()=>choose(q,i)}>
+                {o.label}
+              </button>)}
             </div>
           ) : (
             <div className="answers">

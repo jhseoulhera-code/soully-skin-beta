@@ -6,13 +6,18 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:skin-v1": "node scripts/testSkinV1.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.10",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "@supabase/supabase-js": "^2.45.4"
+    "vite": "^5.4.10"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
   }
 }
