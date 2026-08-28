@@ -1,5 +1,16 @@
 # SOULLY Skin Type Beta v3.2
 
+## v4.0 익명 진단 추적 + MY SKIN HISTORY
+- 비회원도 로그인 없이 끝까지 진단 가능 (기존과 동일)
+- `supabase-migration-diagnosis-tracking.sql`을 Supabase SQL 에디터에서 실행하면
+  visitors / diagnosis_sessions / diagnosis_answers / diagnosis_results / admins
+  테이블과 RLS가 추가됨 (`supabase-schema.sql`의 기존 테이블은 그대로 유지)
+- 결과 화면 하단 "내 피부 변화 저장하기"로 이메일 회원가입/로그인 시
+  해당 브라우저의 익명 진단 기록이 계정에 연결되고 MY SKIN HISTORY에서
+  이전 결과와 비교 가능
+- 카카오 로그인은 Supabase 대시보드에서 Provider를 켜기 전까지는 버튼만
+  존재하는 준비 상태
+
 ## v3.2 변경
 - 중간 챕터를 선택해서 건너뛰는 기능 제거
 - 항상 1번 챕터부터 시작

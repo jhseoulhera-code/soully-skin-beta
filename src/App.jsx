@@ -1,6 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { chapters, questions } from './questions'
 import { saveLead } from './supabase'
+import { AuthProvider, useAuth } from './auth'
+import AuthPanel from './AuthPanel'
+import SkinHistory from './SkinHistory'
+import {
+  ensureVisitorRecord,
+  getOrCreateVisitorId,
+  createDiagnosisSession,
+  recordAnswer,
+  completeSession,
+  saveDiagnosisResult,
+  getCurrentUserId,
+  linkVisitorSessionsToUser
+} from './diagnosisTracking'
 
 const AXIS = {
   OD:['유분','건조'],
@@ -83,7 +96,16 @@ function HexRadar({ data }) {
   )
 }
 
+// Wraps the diagnosis flow with auth state (Supabase Auth — the auth
+// system this project already has connected via src/supabase.js). Nothing
+// inside DiagnosisApp's existing questions/scoring/result design changes;
+// this only makes `useAuth()` available to it.
 export default function App(){
+  return <AuthProvider><DiagnosisApp/></AuthProvider>
+}
+
+function DiagnosisApp(){
+  const { user } = useAuth()
   const [screen,setScreen]=useState('landing')
   const [mode,setMode]=useState(null) // 'quick' (16, 4-axis) | 'deep' (64, 6-axis)
   const [chapterIndex,setChapterIndex]=useState(0)
@@ -103,6 +125,35 @@ export default function App(){
   // it's mutated synchronously, so two clicks fired in the same tick — before
   // React has re-rendered the disabled button — still can't both pass it.
   const submittingRef=useRef(false)
+
+  // --- anonymous diagnosis tracking (visitor/session/answers/result) ---
+  const [sessionId,setSessionId]=useState(null)
+  const [showAuthPanel,setShowAuthPanel]=useState(false)
+  const [savedToAccount,setSavedToAccount]=useState(false)
+  // Guards saveDiagnosisResult against firing twice for the same session
+  // (re-renders, React StrictMode's double-invoke in dev).
+  const resultSavedForRef=useRef(null)
+  // Reset when the current question changes, so response_time_ms measures
+  // time-on-question rather than time-since-app-open.
+  const questionShownAtRef=useRef(Date.now())
+
+  useEffect(()=>{ ensureVisitorRecord() },[])
+
+  useEffect(()=>{
+    questionShownAtRef.current=Date.now()
+  },[chapterIndex,batchIndex,screen])
+
+  useEffect(()=>{
+    if(screen!=='result' || !sessionId) return
+    if(resultSavedForRef.current===sessionId) return
+    resultSavedForRef.current=sessionId
+    ;(async()=>{
+      await completeSession(sessionId)
+      const uid=await getCurrentUserId()
+      await saveDiagnosisResult(sessionId, uid, analysis, mode)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[screen,sessionId])
 
   const toggleMethod=(key)=>setRecommendMethods(v=>v.includes(key)?v.filter(x=>x!==key):[...v,key])
 
@@ -180,6 +231,16 @@ export default function App(){
 
   const choose=(q,i)=>{
     setAnswers(v=>({...v,[q.text]:i}))
+    if(sessionId){
+      const responseTimeMs=Date.now()-questionShownAtRef.current
+      recordAnswer(sessionId,{
+        questionId: q.tag,
+        answerValue: q.options[i].score,
+        answerLabel: q.options[i].label,
+        optionIndex: i,
+        responseTimeMs
+      })
+    }
     if(advanceTimerRef.current) clearTimeout(advanceTimerRef.current)
     // Long enough to see the answer highlight before the screen changes,
     // short enough not to feel like a delay.
@@ -265,7 +326,20 @@ export default function App(){
     }
   }
 
+  // Links this browser's not-yet-linked anonymous sessions to the user who
+  // just signed up/in, and marks the just-computed result as saved (see
+  // #7/#8 of the CTA block on the result screen below).
+  const handleAuthSuccess = async (authUser) => {
+    setShowAuthPanel(false)
+    if(!authUser) return // email-confirmation-pending signup: no session yet
+    const visitorId = getOrCreateVisitorId()
+    await linkVisitorSessionsToUser(authUser.id, visitorId)
+    setSavedToAccount(true)
+  }
+
   const theme={'--accent':chapter?.accent,'--soft':chapter?.soft,'--deep':chapter?.deep}
+
+  if(screen==='history') return <SkinHistory userId={user?.id} onClose={()=>setScreen('landing')}/>
 
   if(screen==='landing') return <main className="screen landing">
     <div className="orb orb1"/><div className="orb orb2"/>
@@ -276,6 +350,7 @@ export default function App(){
       <div className="kicker">SKIN TYPE BETA</div>
       <p>피부의 일상 반응을 따라가며<br/>나만의 피부 성향을 섬세하게 분석해요.</p>
       <div className="meta"><span>회원가입 없음</span><span>무료</span></div>
+      {user && <button className="text-btn" onClick={()=>setScreen('history')}>MY SKIN HISTORY 보기</button>}
 
       <div className="mode-picker">
         <button className="mode-card mode-card--quick" onClick={()=>{setMode('quick');setScreen('journey')}}>
@@ -307,7 +382,13 @@ export default function App(){
           <i>{i===0?'START':'•'}</i>
         </div>)}
       </div>
-      <button className="cta purple" onClick={()=>{setChapterIndex(0);setBatchIndex(0);setShowInsight(false);setScreen('test')}}>처음부터 시작하기</button>
+      <button className="cta purple" onClick={async ()=>{
+        setChapterIndex(0);setBatchIndex(0);setShowInsight(false);setScreen('test')
+        resultSavedForRef.current=null
+        setSavedToAccount(false)
+        const { sessionId: newSessionId } = await createDiagnosisSession(mode.toUpperCase())
+        setSessionId(newSessionId)
+      }}>처음부터 시작하기</button>
     </section>
   </main>
 
@@ -427,12 +508,26 @@ export default function App(){
           <div className="coming"><span>PREPARING</span><b>Skin 64 · {analysis.type64}</b></div>
         </div>}
 
+        <div className="lead-card save-history-card">
+          {user ? <>
+            <h3>{savedToAccount ? '오늘의 결과가 저장되었어요' : '이 결과는 내 계정에 저장돼요'}</h3>
+            <p>MY SKIN HISTORY에서 이전 결과와 비교해볼 수 있어요.</p>
+            <button className="cta purple" onClick={()=>setScreen('history')}>MY SKIN HISTORY 보기</button>
+          </> : <>
+            <h3>내 피부 변화 저장하기</h3>
+            <p>오늘의 결과를 저장하면 다음 진단에서 내 피부가 어떻게 달라졌는지 비교할 수 있어요.</p>
+            <button className="cta purple" onClick={()=>setShowAuthPanel(true)}>내 피부 변화 저장하기</button>
+          </>}
+        </div>
+
         <button className="cta purple" onClick={()=>{
           setAnswers({});setChapterIndex(0);setBatchIndex(0);setScreen('landing');setMode(null)
           setContactValue('');setConsent(false);setLeadStatus('')
           setShow64Gate(false);setShowDetailed64Type(false);setSubmitting(false);submittingRef.current=false
+          setSessionId(null);setSavedToAccount(false);resultSavedForRef.current=null
         }}>처음부터 다시 하기</button>
       </section>
+      {showAuthPanel && <AuthPanel onSuccess={handleAuthSuccess} onClose={()=>setShowAuthPanel(false)}/>}
     </main>
   }
 

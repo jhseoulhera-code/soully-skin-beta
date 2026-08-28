@@ -216,3 +216,38 @@
 .cta:disabled{opacity:.55;cursor:not-allowed}
 .unlock-teaser p{margin-bottom:14px}
 .detail64-card p{margin-bottom:2px}
+
+
+/* v4.0 anonymous diagnosis tracking: save-to-account CTA, auth modal, MY SKIN HISTORY */
+.save-history-card{margin-top:22px}
+
+.auth-overlay{
+  position:fixed;inset:0;z-index:50;
+  background:rgba(42,35,52,.45);
+  display:flex;align-items:center;justify-content:center;
+  padding:16px;
+}
+.auth-panel{position:relative;width:min(100%,440px);padding:32px 26px;text-align:left}
+.auth-close{
+  position:absolute;top:14px;right:14px;
+  width:32px;height:32px;border:0;border-radius:999px;
+  background:#f3effa;color:#726c8d;font-size:18px;line-height:1;cursor:pointer
+}
+.auth-panel form{display:grid;gap:10px;margin-top:4px}
+.auth-password-input{margin-top:0}
+.auth-kakao{
+  width:100%;min-height:48px;margin-top:10px;border-radius:13px;border:1px solid #ede4cf;
+  background:#fef7e4;color:#a4874a;font-weight:800;cursor:not-allowed
+}
+
+.history-card{max-width:560px;padding:30px 26px;text-align:left}
+.history-block{margin:22px 0;padding:16px 18px;border-radius:18px;background:#f8f6fc;border:1px solid #ece7f5}
+.history-block h3{margin:0 0 10px;font-size:15px}
+.history-compare-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:14px;color:#4a4256}
+.history-compare-row span{color:#8b8494}
+.history-list{display:grid;gap:10px}
+.history-list-item{padding:14px 16px;border-radius:14px;background:#fff;border:1px solid #eee9f4}
+.history-list-top{display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:6px}
+.history-list-type{font-weight:900;font-size:18px;color:#5d4fa3;margin-bottom:6px}
+.history-list-scores{display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:#756c80}
+.history-list-scores span{background:#f3effa;border-radius:999px;padding:4px 9px}
